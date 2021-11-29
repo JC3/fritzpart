@@ -10,23 +10,26 @@
 #include <QProcess>
 #include <QDate>
 #include <QRegExp>
+#include <QCloseEvent>
 #include <stdexcept>
 #include <iomanip>
 #include <sstream>
 #include <cmath>
 
-MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent)
-    , ui(new Ui::MainWindow)
+MainWindow::MainWindow(QWidget *parent) :
+    QMainWindow(parent),
+    ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    basetitle = windowTitle();
+    connect(ui->txtScript->document(), SIGNAL(modificationChanged(bool)), this, SLOT(updateWindowTitle()));
+    updateWindowTitle();
 }
 
 MainWindow::~MainWindow()
 {
     delete ui;
 }
-
 
 void MainWindow::on_actOpenFile_triggered()
 {
@@ -39,13 +42,43 @@ void MainWindow::on_actOpenFile_triggered()
 void MainWindow::on_actSaveFile_triggered()
 {
     QString prev = settings.value("scriptpath").toString();
+    if (curfilename != "")
+        prev = curfilename;
     QString filename = QFileDialog::getSaveFileName(this, "Save File...", prev, "*.txt");
     if (filename != "")
         saveFile(filename);
 }
 
+void MainWindow::on_actNewFile_triggered()
+{
+    if (promptSaveIfModified()) {
+        //ui->txtScript->setDocument(new QTextDocument(ui->txtScript));
+        // whatever:
+        ui->txtScript->clear();
+        setCurrentFileName("");
+    }
+}
+
+bool MainWindow::promptSaveIfModified() {
+    bool confirmed = false;
+    if (ui->txtScript->document()->isModified()) {
+        int action = QMessageBox::warning(this, "Confirm Action", "there are unsaved changes. do you want to save them?",
+                                          QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+        if (action == QMessageBox::Save) {
+            ui->actSaveFile->trigger();
+            confirmed = !ui->txtScript->document()->isModified();
+        } else if (action == QMessageBox::Discard) {
+            confirmed = true;
+        }
+    } else {
+        confirmed = true;
+    }
+    return confirmed;
+}
 
 void MainWindow::loadFile(QString filename) {
+    if (!promptSaveIfModified())
+        return;
     try {
         QFile file(filename);
         if (!file.open(QFile::ReadOnly | QFile::Text))
@@ -54,6 +87,8 @@ void MainWindow::loadFile(QString filename) {
         if (script == "")
             throw std::runtime_error("File contains no text.");
         ui->txtScript->setPlainText(script);
+        ui->txtScript->document()->setModified(false);
+        setCurrentFileName(QFileInfo(file).absoluteFilePath());
         settings.setValue("scriptpath", QFileInfo(file).absolutePath());
     } catch (const std::exception &x) {
         QMessageBox::critical(this, "Error Loading File", x.what());
@@ -69,12 +104,26 @@ void MainWindow::saveFile(QString filename) {
         QByteArray data = ui->txtScript->toPlainText().toUtf8();
         if (file.write(data) != data.length())
             throw std::runtime_error(file.errorString().toStdString());
+        setCurrentFileName(QFileInfo(file).absoluteFilePath());
         settings.setValue("scriptpath", QFileInfo(file).absolutePath());
+        ui->txtScript->document()->setModified(false);
     } catch (const std::exception &x) {
         QMessageBox::critical(this, "Error Saving File", x.what());
     }
 }
 
+void MainWindow::closeEvent(QCloseEvent *event) {
+    if (promptSaveIfModified())
+        event->accept();
+    else
+        event->ignore();
+}
+
+void MainWindow::updateWindowTitle() {
+    bool mod = ui->txtScript->document()->isModified();
+    QString name = curfilename.isEmpty() ? "untitled" : QFileInfo(curfilename).fileName();
+    setWindowTitle(QString("%1%2 - %3").arg(mod ? "*" : "").arg(name, basetitle));
+}
 
 static bool matches (const QStringList &tokens, QString command, int minparms = -1, int maxparms = -1) {
     if (tokens.empty() || QString::compare(tokens[0], command, Qt::CaseInsensitive))
@@ -110,6 +159,14 @@ static double parseCoord (double cur, QString coord) {
 
 void MainWindow::on_actCompile_triggered()
 {
+    try {
+        compile();
+    } catch (const std::exception &x) {
+        QMessageBox::critical(this, "Error Compiling Part", x.what());
+    }
+}
+
+void MainWindow::compile() {
 
     QList<QStringList> scriptlines;
     Part part;
@@ -146,6 +203,8 @@ void MainWindow::on_actCompile_triggered()
         if (!tokens.empty() && !tokens[0].startsWith("#"))
             scriptlines.append(tokens);
     }
+    if (indesc)
+        throw std::runtime_error("end of file in multiline description block");
 
     // ---- parse
 
@@ -223,7 +282,7 @@ void MainWindow::on_actCompile_triggered()
             for (int n = 1; n < tokens.size(); ++ n)
                 part.metatags.append(tokens[n]);
         } else
-            qWarning() << "ignoring unknown directive:" << tokens;
+            throw std::runtime_error(QString("unknown directive: %1").arg(tokens.join(",")).toStdString());
     }
 
     for (Pin &pin : part.pins) { // now that we probably have width/height, apply origin settings
@@ -656,8 +715,14 @@ static QDomDocument generateSchematic (const Part &part) {
             hdrstyle = Male;
         else if (part.schematicmod == "female")
             hdrstyle = Female;
+        else if (part.schematicmod == "terminal" || part.schematicmod == "")
+            hdrstyle = Terminal;
+        else
+            throw std::runtime_error(QString("unknown schematic header type: %1").arg(part.schematicmod).toStdString());
     } else if (part.schematic == "block")
         sc = scPlaceLinear(part);
+    else
+        throw std::runtime_error(QString("unknown schematic type: %1").arg(part.schematic).toStdString());
 
     qDebug() << "schematic:" << sc.gridw << "x" << sc.gridh;
     for (const ScPin &pin : sc.pins)
@@ -857,7 +922,7 @@ static QDomDocument generateFZP (const Part &part, QString prefix) {
     appendSimple(module, "title", part.metadata.getValue("title", prefix));
     appendSimple(module, "label", part.metadata["label"]);
     appendSimple(module, "date", QDate::currentDate().toString());
-    appendSimple(module, "taxonomy", QString("part.dip.%1.pins").arg(part.pins.size())); // todo: ???
+    //appendSimple(module, "taxonomy", QString("part.dip.%1.pins").arg(part.pins.size())); // todo: ???
     appendSimple(module, "description", part.metadata["description"]);
     appendSimple(module, "url", part.metadata["url"]);
 
@@ -993,7 +1058,19 @@ void MainWindow::saveBasicPart(const Part &part, QString prefix) {
 
     QStringList args = { "-o", QString("%1.fzpz").arg(prefix) };
     args.append(filenames);
-    int result = QProcess::execute("minizip", args);
+    int result = QProcess::execute(settings.value("minizip", "minizip").toString(), args);
     qDebug() << "minizip:" << result;
+    if (result)
+        throw std::runtime_error("failed to execute minizip");
 
+}
+
+void MainWindow::on_actLocateMinizip_triggered()
+{
+    QString minizip = settings.value("minizip").toString();
+    minizip = QFileDialog::getOpenFileName(this, "Locate minizip", minizip);
+    if (minizip == "")
+        return;
+    minizip = QFileInfo(minizip).absoluteFilePath();
+    settings.setValue("minizip", minizip);
 }

@@ -4,7 +4,7 @@
 int main (int argc, char *argv[]) {
 
     QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
-    QApplication::setOrganizationName("dev");
+    QApplication::setOrganizationName("fritzpart");
     QApplication::setApplicationName("fritzpart");
 
     QApplication a(argc, argv);

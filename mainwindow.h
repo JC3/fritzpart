@@ -4,6 +4,7 @@
 #include <QMainWindow>
 #include <QSettings>
 #include <QMap>
+#include <QTextDocument>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -74,11 +75,20 @@ private slots:
     void on_actOpenFile_triggered();
     void on_actSaveFile_triggered();
     void on_actCompile_triggered();
-
+    void on_actLocateMinizip_triggered();
+    void on_actNewFile_triggered();
+    void updateWindowTitle();
+protected:
+    void closeEvent(QCloseEvent *event);
 private:
     Ui::MainWindow *ui;
     QSettings settings;
+    QString curfilename;
+    QString basetitle;
+    bool promptSaveIfModified ();
+    void setCurrentFileName (QString filename) { curfilename = filename; updateWindowTitle(); }
     void saveBasicPart (const Part &part, QString prefix);
+    void compile ();
 };
 
 #endif // MAINWINDOW_H
