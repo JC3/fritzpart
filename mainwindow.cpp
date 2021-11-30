@@ -11,6 +11,7 @@
 #include <QDate>
 #include <QRegExp>
 #include <QCloseEvent>
+#include <QSvgRenderer>
 #include <stdexcept>
 #include <iomanip>
 #include <sstream>
@@ -56,6 +57,7 @@ void MainWindow::on_actNewFile_triggered()
         // whatever:
         ui->txtScript->clear();
         setCurrentFileName("");
+        clearPartPreviews();
     }
 }
 
@@ -90,6 +92,7 @@ void MainWindow::loadFile(QString filename) {
         ui->txtScript->document()->setModified(false);
         setCurrentFileName(QFileInfo(file).absoluteFilePath());
         settings.setValue("scriptpath", QFileInfo(file).absolutePath());
+        clearPartPreviews();
     } catch (const std::exception &x) {
         QMessageBox::critical(this, "Error Loading File", x.what());
     }
@@ -123,6 +126,12 @@ void MainWindow::updateWindowTitle() {
     bool mod = ui->txtScript->document()->isModified();
     QString name = curfilename.isEmpty() ? "untitled" : QFileInfo(curfilename).fileName();
     setWindowTitle(QString("%1%2 - %3").arg(mod ? "*" : "").arg(name, basetitle));
+}
+
+void MainWindow::clearPartPreviews () {
+    ui->svgBreadboard->load(QByteArray());
+    ui->svgPCB->load(QByteArray());
+    ui->svgSchematic->load(QByteArray());
 }
 
 static bool matches (const QStringList &tokens, QString command, int minparms = -1, int maxparms = -1) {
@@ -170,13 +179,24 @@ static bool parseBool (QString str) {
 void MainWindow::on_actCompile_triggered()
 {
     try {
-        compile();
+        Part part = compile();
+        saveBasicPart(part, part.filename);
     } catch (const std::exception &x) {
         QMessageBox::critical(this, "Error Compiling Part", x.what());
     }
 }
 
-void MainWindow::compile() {
+void MainWindow::on_actPreview_triggered()
+{
+    try {
+        Part part = compile();
+        showPartPreviews(part);
+    } catch (const std::exception &x) {
+        QMessageBox::critical(this, "Error Compiling Part", x.what());
+    }
+}
+
+Part MainWindow::compile() {
 
     QList<QStringList> scriptlines;
     Part part;
@@ -358,7 +378,8 @@ void MainWindow::compile() {
     qDebug() << "outline" << part.outline;
     for (const Pin &pin : part.pins)
         qDebug() << "  pin" << pin.number << pin.name << "@" << pin.x << pin.y << "d=" << pin.hole << "r=" << pin.ring << (pin.square ? "square" : "round");
-    saveBasicPart(part, part.filename);
+
+    return part;
 
 }
 
@@ -1119,6 +1140,24 @@ void MainWindow::saveBasicPart(const Part &part, QString prefix) {
     if (result)
         throw std::runtime_error("failed to execute minizip");
 
+    showPartPreviews(breadboard, schematic, pcb);
+
+}
+
+void MainWindow::showPartPreviews (const Part &part) {
+    QDomDocument pcb = generatePCB(part);
+    QDomDocument breadboard = generateBreadboard(part);
+    QDomDocument schematic = generateSchematic(part);
+    showPartPreviews(breadboard, schematic, pcb);
+}
+
+void MainWindow::showPartPreviews(const QDomDocument &bb, const QDomDocument &sc, const QDomDocument &pcb) {
+    ui->svgPCB->load(pcb.toByteArray());
+    ui->svgPCB->renderer()->setAspectRatioMode(Qt::KeepAspectRatio);
+    ui->svgBreadboard->load(bb.toByteArray());
+    ui->svgBreadboard->renderer()->setAspectRatioMode(Qt::KeepAspectRatio);
+    ui->svgSchematic->load(sc.toByteArray());
+    ui->svgSchematic->renderer()->setAspectRatioMode(Qt::KeepAspectRatio);
 }
 
 void MainWindow::on_actLocateMinizip_triggered()
