@@ -50,14 +50,20 @@ struct Part {
     QString bbtext;
     QString bbtextcolor;
     double bbtextsize; // todo: different default depending on units
+    bool bbpinlabels;
+    QString bbpinlabelcolor;
+    double bbpinlabelsize; // todo: different default depending on units
     QString sctext;
+    bool scpinlabels;
+    bool scpinnumbers;
     PropertyMap metadata;
     PropertyMap metaprops;
     QStringList metatags;
     QString filename;
     Part () : units("mm"), width(0), height(0), outline(0.254), color("#116b9e"), corner(0), schematic("edge"),
-        mingrid{0,0}, extragrid{0,0}, bbtext("$partnumber"), bbtextcolor("#ffffff"), bbtextsize(5.08), sctext("$title"),
-        metatags({"fritzpart"}) { }
+        mingrid{0,0}, extragrid{0,0}, bbtext("$partnumber"), bbtextcolor("#ffffff"), bbtextsize(5.08),
+        bbpinlabels(true), bbpinlabelcolor("#c5e6f9"), bbpinlabelsize(2.54), sctext("$title"), scpinlabels(true),
+        scpinnumbers(true), metatags({"fritzpart"}) { }
 };
 
 class MainWindow : public QMainWindow
