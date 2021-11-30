@@ -34,8 +34,11 @@ corner 0.5
 schematic hedge
 scminsize 5 3
 #scgrow 0 0
-bbtext $partnumber #ffffff 5.08
+sclabels on
+scnumbers on
+bbtext $partnumber #bbbbbb 5.08
 #sctext $title
+bblabels on #ffffff 2.54
 
 hole 1.05
 ring .508
@@ -43,6 +46,8 @@ pin 2.2 8.5 "AC" square
 pin 2.2 14.5 "AC"
 pin 35.8 2.5 "+Vo"
 pin 35.8 20.5 "-Vo"
+#pin 15 2 "DN"
+#pin 15 21 "UP"
 #pin @0 @2.54
 #pin @0 @2.54
 #pin @0 @2.54
