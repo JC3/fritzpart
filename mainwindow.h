@@ -5,6 +5,7 @@
 #include <QSettings>
 #include <QMap>
 #include <QDomDocument>
+#include <QSyntaxHighlighter>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -66,12 +67,20 @@ struct Part {
         scpinnumbers(true), metatags({"fritzpart"}) { }
 };
 
+class ScriptSyntaxHighlighter : public QSyntaxHighlighter {
+    Q_OBJECT
+public:
+    explicit ScriptSyntaxHighlighter (QTextDocument *doc) : QSyntaxHighlighter(doc) { }
+protected:
+    void highlightBlock (const QString &line);
+};
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
 
 public:
-    MainWindow(QWidget *parent = nullptr);
+    explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
 public slots:

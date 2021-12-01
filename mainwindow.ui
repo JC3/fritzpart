@@ -16,7 +16,7 @@
   <widget class="QWidget" name="centralwidget">
    <layout class="QHBoxLayout" name="horizontalLayout" stretch="5,0,2">
     <item>
-     <widget class="QPlainTextEdit" name="txtScript">
+     <widget class="CodeEditor" name="txtScript">
       <property name="minimumSize">
        <size>
         <width>300</width>
@@ -461,6 +461,11 @@
    <extends>QWidget</extends>
    <header location="global">QSvgWidget.h</header>
    <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>CodeEditor</class>
+   <extends>QPlainTextEdit</extends>
+   <header>codeeditor.h</header>
   </customwidget>
  </customwidgets>
  <resources/>

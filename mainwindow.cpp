@@ -24,6 +24,7 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->setupUi(this);
     basetitle = windowTitle();
     connect(ui->txtScript->document(), SIGNAL(modificationChanged(bool)), this, SLOT(updateWindowTitle()));
+    new ScriptSyntaxHighlighter(ui->txtScript->document());
     updateWindowTitle();
 }
 
@@ -196,6 +197,168 @@ void MainWindow::on_actPreview_triggered()
     }
 }
 
+// ==== begin syntax highter
+
+namespace ExtraFormatFlags {
+constexpr int None = 0;
+constexpr int Bold = 1<<0;
+constexpr int Italic = 1<<1;
+}
+
+static QTextCharFormat ColorFormat (int r, int g, int b, int flags = ExtraFormatFlags::None) {
+    QTextCharFormat format;
+    format.setForeground(QColor(r, g, b));
+    format.setFontWeight((flags & ExtraFormatFlags::Bold) ? QFont::Bold : QFont::Normal);
+    format.setFontItalic((flags & ExtraFormatFlags::Italic) != 0);
+    return format;
+}
+
+class tell {
+    int &pos;
+public:
+    explicit tell (int &pos) : pos(pos) { }
+    template <class C,class Tr> friend auto& operator >> (std::basic_istream<C,Tr> &strm, tell t) {
+        return t.pos = strm.tellg(), strm;
+    }
+};
+
+struct TokenInfo {
+    QString text;
+    int start;
+    int end;
+    bool quoted;
+    int length () const { return end - start; }
+    friend auto& operator >> (std::wistringstream &strm, TokenInfo &t) {
+        std::wstring stdstr;
+        strm >> std::ws >> tell(t.start) >> std::quoted(stdstr);
+        auto state = strm.rdstate(); // ARGH
+        strm >> tell(t.end);
+        strm.clear(); // ARRGH
+        strm.setstate(state); // ARRRRGH
+        t.text = QString::fromStdWString(stdstr);
+        t.quoted = (t.end != -1) && ((int)stdstr.length() != (t.end - t.start)); // hack
+        return strm;
+        // todo: this >> was supposed to make this more convenient but ended
+        // up needing too many hacks and now it sucks.
+    }
+};
+
+void ScriptSyntaxHighlighter::highlightBlock(const QString &line) {
+
+    using namespace ExtraFormatFlags;
+    static const auto DirectiveFmt = ColorFormat(0, 0, 255); //, Bold);
+    static const auto CommentFmt = ColorFormat(0, 128, 0, Italic);
+    static const auto DescriptionFmt = ColorFormat(192, 96, 0, Bold);
+    static const auto ErrorFmt = ColorFormat(255, 0, 0);
+    static const auto QuotedFmt = ColorFormat(64, 64, 64);
+    static const auto QuotedDescFmt = ColorFormat(224, 112, 0, Bold);
+    static const auto KeywordFmt = ColorFormat(128, 0, 128);
+
+    // --- pretty much ripped from compile(). todo: clean this all up
+    // todo: fix issue where italicized text increases line height by 1px
+
+    constexpr int NormalState = 0;
+    constexpr int DescBlockState = 1;
+
+    static const QStringList Directives = {
+        "version", "author", "title", "label", "family", "partnumber", "variant", "url", "moduleid",
+        "units", "width", "height", "outline", "hole", "ring", "pin",
+        "color", "corner", "schematic", "scminsize", "scgrow", "sctext",
+        "sclabels", "scnumbers", "bbtext", "bblabels", "origin",
+        "description", "filename", "property", "tag", "tags"
+    };
+
+    static const QStringList MetaTags = {
+        "version", "author", "title", "label", "family", "partnumber", "variant", "url", "moduleid",
+        "description"
+    };
+
+    static const QMap<QString,QStringList> Keywords = {
+        { "pin", { "square"} },
+        { "schematic", { "edge", "hedge", "vedge", "block", "header", "male", "female", "terminals" } },
+        { "origin", { "left", "right", "top", "bottom" } }
+    };
+
+    static const QStringList HasMetaVal = { "bbtext", "sctext" };
+
+    static const QRegExp REDescStart("^\\s*description:\\s*$", Qt::CaseInsensitive);
+    static const QRegExp REDescEnd("^\\s*:description\\s*$", Qt::CaseInsensitive);
+    static const QRegExp REComment("^\\s*#.*$");
+
+    // for desc start/end, they're the only thing on the line so don't
+    // really care about limiting format to start/end pos.
+    bool indesc = (previousBlockState() == DescBlockState), finished = true;
+    if (!indesc && REDescStart.exactMatch(line)) {
+        indesc = true;
+        setFormat(0, line.length(), DirectiveFmt);
+    } else if (indesc && REDescEnd.exactMatch(line)) {
+        indesc = false;
+        setFormat(0, line.length(), DirectiveFmt);
+    } else if (indesc) {
+        setFormat(0, line.length(), DescriptionFmt);
+    } else if (REComment.exactMatch(line)) {
+        setFormat(0, line.length(), CommentFmt);
+    } else {
+        finished = false;
+    }
+    setCurrentBlockState(indesc ? DescBlockState : NormalState);
+    if (finished)
+        return;
+
+    // ok; so that takes care of the exceptional stuff. everything else
+    // is just "directive [ params ... ]". only special cases here will
+    // be i want "description" param's format to match description block.
+    //
+    // now, we could just always treat the first word as a directive but
+    // i think it's useful to highlight invalid ones. so we'll actually
+    // check to make sure it's valid.
+    //
+    // also we could treat everything after the first word as params but
+    // i want special formatting for quoted params.
+
+    bool first = true, isdesc = false, hasmv = false;
+    TokenInfo token;
+    std::wistringstream liner(line.toStdWString()); // todo: switch to utf32
+    QStringList keywords;
+    while (liner >> token) {
+        if (token.end == -1) token.end = line.length(); // ARRRRRGH
+        if (first) {
+            if (Directives.contains(token.text, Qt::CaseInsensitive)) {
+                setFormat(token.start, token.length(), DirectiveFmt);
+                isdesc = !token.text.compare("description", Qt::CaseInsensitive);
+                hasmv = HasMetaVal.contains(token.text, Qt::CaseInsensitive);
+            } else {
+                setFormat(token.start, token.length(), ErrorFmt);
+            }
+            keywords = Keywords[token.text.toLower()];
+        } else if (token.quoted) {
+            setFormat(token.start, token.length(), isdesc ? QuotedDescFmt : QuotedFmt);
+        } else if (isdesc) {
+            setFormat(token.start, token.length(), DescriptionFmt);
+        } else if (keywords.contains(token.text, Qt::CaseInsensitive)) {
+            setFormat(token.start, token.length(), KeywordFmt);
+        }
+        if (hasmv && !first && token.text.startsWith("$")) {
+            QTextCharFormat f;
+            if (MetaTags.contains(token.text.mid(1), Qt::CaseInsensitive)) {
+                //f = token.quoted ? QuotedFmt : QTextCharFormat();
+                //f.setFontWeight(QFont::Bold);
+                f = KeywordFmt;
+            } else {
+                f = ErrorFmt;
+            }
+            int o = token.quoted ? 1 : 0;
+            setFormat(token.start + o, token.length() - 2*o, f);
+        }
+        first = false;
+    }
+
+    // that was waaay too much code
+
+}
+
+// ==== end syntax highter
+
 Part MainWindow::compile() {
 
     QList<QStringList> scriptlines;
@@ -298,6 +461,7 @@ Part MainWindow::compile() {
             if (tokens.size() > 2) part.bbpinlabelcolor = tokens[2];
             if (tokens.size() > 3) part.bbpinlabelsize = tokens[3].toDouble();
         } else if (matches(tokens, "origin", 1, INT_MAX)) {
+            // todo: this is dumb just use whole words
             for (int n = 1; n < tokens.size(); ++ n) {
                 if (tokens[n].startsWith("l", Qt::CaseInsensitive))
                     origleft = true;
