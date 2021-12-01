@@ -12,6 +12,7 @@
 #include <QRegExp>
 #include <QCloseEvent>
 #include <QSvgRenderer>
+#include <QDesktopServices>
 #include <stdexcept>
 #include <iomanip>
 #include <sstream>
@@ -22,6 +23,8 @@ MainWindow::MainWindow(QWidget *parent) :
     ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    ui->actShowOutput->setChecked(settings.value("showoutput", true).toBool());
+    ui->actBackup->setChecked(settings.value("backupfzpz", true).toBool());
     basetitle = windowTitle();
     connect(ui->txtScript->document(), SIGNAL(modificationChanged(bool)), this, SLOT(updateWindowTitle()));
     updateWindowTitle();
@@ -30,6 +33,16 @@ MainWindow::MainWindow(QWidget *parent) :
 MainWindow::~MainWindow()
 {
     delete ui;
+}
+
+void MainWindow::on_actShowOutput_triggered(bool checked)
+{
+    settings.setValue("showoutput", checked);
+}
+
+void MainWindow::on_actBackup_triggered(bool checked)
+{
+    settings.setValue("backupfzpz", checked);
 }
 
 void MainWindow::on_actOpenFile_triggered()
@@ -180,7 +193,21 @@ void MainWindow::on_actCompile_triggered()
 {
     try {
         Part part = compile();
-        saveBasicPart(part, part.filename);
+        saveBasicPart(part, PartFilenames(part.filename, curfilename));
+    } catch (const std::exception &x) {
+        QMessageBox::critical(this, "Error Compiling Part", x.what());
+    }
+}
+
+void MainWindow::on_actCompileTo_triggered()
+{
+    try {
+        Part part = compile();
+        PartFilenames names(part.filename, curfilename);
+        names.fzpz = QFileDialog::getSaveFileName(this, "Compile To", names.fzpz, "Fritzing Part (*.fzpz)");
+        if (names.fzpz == "")
+            return;
+        saveBasicPart(part, names);
     } catch (const std::exception &x) {
         QMessageBox::critical(this, "Error Compiling Part", x.what());
     }
@@ -358,7 +385,11 @@ Part MainWindow::compile() {
     part.metadata["description"] = part.metadata["description"].trimmed();
 
     if (part.filename == "")
-        part.filename = getany({ "moduleid", "title", "partnumber", "family" }, "compiled");
+        part.filename = getany({ "moduleid", "title", "partnumber", "family" }, "");
+    if (part.filename == "") {
+        throw std::runtime_error("could not determine output filename: you must specify at "
+                                 "least one of: filename, moduleid, title, partnumber, or family");
+    }
     setdef("partnumber", { "title", "family" }, part.filename);
     setdef("family", { "partnumber" });
     setdef("title", { "partnumber", "family" });
@@ -986,17 +1017,17 @@ static QDomElement appendSimple (QDomNode parent, QString tag, QString text) {
 }
 
 
-static QDomDocument generateFZP (const Part &part, QString prefix) {
+static QDomDocument generateFZP (const Part &part, const PartFilenames &names) {
 
     QDomDocument fzp;
     QDomElement module = initDocument(fzp, "module");
-    module.setAttribute("referenceFile", QString("%1.fzp").arg(prefix));
+    module.setAttribute("referenceFile", names.fzp);
     module.setAttribute("fritzingVersion", "0.9.9");
-    module.setAttribute("moduleId", prefix);
+    module.setAttribute("moduleId", part.metadata["moduleid"]);
 
     appendSimple(module, "version", part.metadata["version"]);
     appendSimple(module, "author", part.metadata["author"]);
-    appendSimple(module, "title", part.metadata.getValue("title", prefix));
+    appendSimple(module, "title", part.metadata["title"]);
     appendSimple(module, "label", part.metadata["label"]);
     appendSimple(module, "date", QDate::currentDate().toString());
     //appendSimple(module, "taxonomy", QString("part.dip.%1.pins").arg(part.pins.size())); // todo: ???
@@ -1026,19 +1057,19 @@ static QDomDocument generateFZP (const Part &part, QString prefix) {
         QDomElement views = appendElement(module, "views"), view, layers;
         view = appendElement(views, "iconView");
         layers = appendElement(view, "layers");
-        layers.setAttribute("image", QString("icon/%1_icon.svg").arg(prefix));
+        layers.setAttribute("image", QString("icon/%1").arg(names.icon));
         appendElement(layers, "layer").setAttribute("layerId", "icon");
         view = appendElement(views, "breadboardView");
         layers = appendElement(view, "layers");
-        layers.setAttribute("image", QString("breadboard/%1_breadboard.svg").arg(prefix));
+        layers.setAttribute("image", QString("breadboard/%1").arg(names.breadboard));
         appendElement(layers, "layer").setAttribute("layerId", "breadboard");
         view = appendElement(views, "schematicView");
         layers = appendElement(view, "layers");
-        layers.setAttribute("image", QString("schematic/%1_schematic.svg").arg(prefix));
+        layers.setAttribute("image", QString("schematic/%1").arg(names.schematic));
         appendElement(layers, "layer").setAttribute("layerId", "schematic");
         view = appendElement(views, "pcbView");
         layers = appendElement(view, "layers");
-        layers.setAttribute("image", QString("pcb/%1_pcb.svg").arg(prefix));
+        layers.setAttribute("image", QString("pcb/%1").arg(names.pcb));
         appendElement(layers, "layer").setAttribute("layerId", "silkscreen");
         appendElement(layers, "layer").setAttribute("layerId", "copper0");
         appendElement(layers, "layer").setAttribute("layerId", "copper1");
@@ -1070,7 +1101,7 @@ static QDomDocument generateFZP (const Part &part, QString prefix) {
         addp(view, "copper1", pin.number, false);
     }
 
-    qDebug().noquote() << fzp.toString();
+    //qDebug().noquote() << fzp.toString();
     return fzp;
 
 }
@@ -1096,31 +1127,43 @@ static QString sanitize (QString filename) {
     return (filename == "") ? "compiled" : filename;
 }
 
+PartFilenames::PartFilenames (QString prefix, QString builddir) {
+    if (prefix != "") {
+        prefix = sanitize(prefix);
+        fzpz = QString("%1.fzpz").arg(prefix);
+        if (builddir != "")
+            fzpz = QFileInfo(builddir).absoluteDir().absoluteFilePath(fzpz);
+        fzp = QString("%1.fzp").arg(prefix);
+        icon = QString("%1_icon.svg").arg(prefix);
+        breadboard = QString("%1_breadboard.svg").arg(prefix);
+        schematic = QString("%1_schematic.svg").arg(prefix);
+        pcb = QString("%1_pcb.svg").arg(prefix);
+    }
+}
 
-void MainWindow::saveBasicPart(const Part &part, QString prefix) {
 
-    prefix = sanitize(prefix);
+void MainWindow::saveBasicPart(const Part &part, const PartFilenames &names) {
 
     QDomDocument pcb = generatePCB(part);
     QDomDocument breadboard = generateBreadboard(part);
     QDomDocument schematic = generateSchematic(part);
     QDomDocument icon = generateIcon(part);
-    QDomDocument fzp = generateFZP(part, prefix);
+    QDomDocument fzp = generateFZP(part, names);
 
-#if 1 // debugging
-    writeXML(pcb, QString("%1-pcb.svg").arg(prefix));
-    writeXML(breadboard, QString("%1-breadboard.svg").arg(prefix));
-    writeXML(schematic, QString("%1-schematic.svg").arg(prefix));
-    writeXML(icon, QString("%1-icon.svg").arg(prefix));
-    writeXML(fzp, QString("%1.fzp").arg(prefix));
+#if 0 // debugging
+    writeXML(pcb, names.pcb);
+    writeXML(breadboard, names.breadboard);
+    writeXML(schematic, names.schematic);
+    writeXML(icon, names.icon);
+    writeXML(fzp, names.fzp);
 #endif
 
     QList<QPair<QDomDocument,QString> > files = {
-        { pcb, QString("svg.pcb.%1_pcb.svg").arg(prefix) },
-        { breadboard, QString("svg.breadboard.%1_breadboard.svg").arg(prefix) },
-        { schematic, QString("svg.schematic.%1_schematic.svg").arg(prefix) },
-        { icon, QString("svg.icon.%1_icon.svg").arg(prefix) },
-        { fzp, QString("part.%1.fzp").arg(prefix) }
+        { pcb, QString("svg.pcb.%1").arg(names.pcb) },
+        { breadboard, QString("svg.breadboard.%1").arg(names.breadboard) },
+        { schematic, QString("svg.schematic.%1").arg(names.schematic) },
+        { icon, QString("svg.icon.%1").arg(names.icon) },
+        { fzp, QString("part.%1").arg(names.fzp) }
     };
 
     QTemporaryDir workdir;
@@ -1133,14 +1176,29 @@ void MainWindow::saveBasicPart(const Part &part, QString prefix) {
         filenames.append(workdir.filePath(file.second));
     }
 
-    QStringList args = { "-o", QString("%1.fzpz").arg(prefix) };
-    args.append(filenames);
-    int result = QProcess::execute(settings.value("minizip", "minizip").toString(), args);
-    qDebug() << "minizip:" << result;
-    if (result)
-        throw std::runtime_error("failed to execute minizip");
-
     showPartPreviews(breadboard, schematic, pcb);
+
+    if (ui->actBackup->isChecked() && QFile::exists(names.fzpz)) {
+        QString backup = names.fzpz + ".fritzpart.bak";
+        qDebug() << "backup" << names.fzpz << " -> " << backup;
+        qDebug() << "remove" << QFile::remove(backup);
+        qDebug() << "copy" << QFile::copy(names.fzpz, backup);
+    }
+
+    QString minizip = settings.value("minizip", "minizip").toString();
+    QStringList args = { "-o", names.fzpz };
+    args.append(filenames);
+    qDebug() << "minizip:" << minizip;
+    qDebug() << "minizip:" << args;
+    int result = QProcess::execute(minizip, args);
+    qDebug() << "minizip: returned " << result;
+    if (result) {
+        throw std::runtime_error("failed to execute minizip. you may have to select it "
+                                 "from the 'build -> settings -> locate minizip' menu.");
+    }
+
+    if (ui->actShowOutput->isChecked())
+        QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(names.fzpz).absolutePath()));
 
 }
 

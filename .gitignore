@@ -4,6 +4,7 @@ release/
 *.fzp
 *.fzpz
 *.svg
+*.fritzpart.bak
 
 # C++ objects and libs
 *.slo

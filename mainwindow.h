@@ -66,6 +66,16 @@ struct Part {
         scpinnumbers(true), metatags({"fritzpart"}) { }
 };
 
+struct PartFilenames {
+    QString fzpz;        // filename (in cwd) or full path
+    QString fzp;         // filename only!!
+    QString icon;        // filename only!!
+    QString breadboard;  // filename only!!
+    QString schematic;   // filename only!!
+    QString pcb;         // filename only!!
+    explicit PartFilenames (QString prefix = QString(), QString builddir = QString());
+};
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -85,6 +95,10 @@ private slots:
     void on_actNewFile_triggered();
     void updateWindowTitle();
     void on_actPreview_triggered();
+    void on_actCompileTo_triggered();
+    void on_actShowOutput_triggered(bool checked);
+
+    void on_actBackup_triggered(bool checked);
 
 protected:
     void closeEvent(QCloseEvent *event);
@@ -95,7 +109,7 @@ private:
     QString basetitle;
     bool promptSaveIfModified ();
     void setCurrentFileName (QString filename) { curfilename = filename; updateWindowTitle(); }
-    void saveBasicPart (const Part &part, QString prefix);
+    void saveBasicPart (const Part &part, const PartFilenames &names);
     void showPartPreviews (const Part &part);
     void showPartPreviews (const QDomDocument &bb, const QDomDocument &sc, const QDomDocument &pcb);
     Part compile ();
