@@ -28,11 +28,40 @@ MainWindow::MainWindow(QWidget *parent) :
     basetitle = windowTitle();
     connect(ui->txtScript->document(), SIGNAL(modificationChanged(bool)), this, SLOT(updateWindowTitle()));
     updateWindowTitle();
+    // look for minizip if necessary (so on first install the user doesn't
+    // have to find it themselves).
+    if (settings.value("minizip").toString().isEmpty()) {
+        const QStringList places = {
+            QDir(QApplication::applicationDirPath()).absoluteFilePath("contrib"),
+            QDir::current().absoluteFilePath("contrib"),
+            QApplication::applicationDirPath(),
+            QDir::currentPath()
+        };
+        qDebug() << "looking for minizip...";
+        for (const QString &place : places) {
+            QString path = QDir(place).absoluteFilePath("minizip.exe");
+            if (QFile::exists(path)) {
+                qDebug() << "found" << path;
+                settings.setValue("minizip", path);
+                break;
+            }
+        }
+    }
 }
 
 MainWindow::~MainWindow()
 {
     delete ui;
+}
+
+void MainWindow::on_actLocateMinizip_triggered()
+{
+    QString minizip = settings.value("minizip").toString();
+    minizip = QFileDialog::getOpenFileName(this, "Locate minizip", minizip);
+    if (minizip == "")
+        return;
+    minizip = QFileInfo(minizip).absoluteFilePath();
+    settings.setValue("minizip", minizip);
 }
 
 void MainWindow::on_actShowOutput_triggered(bool checked)
@@ -223,6 +252,41 @@ void MainWindow::on_actPreview_triggered()
     }
 }
 
+template <typename T>
+static void setDeferredPos (double width, double height, QList<T> &things) {
+    for (T &thing : things) {
+        if (!thing.origleft) {
+            thing.origleft = true;
+            thing.x = width - thing.x;
+        }
+        if (!thing.origtop) {
+            thing.origtop = true;
+            thing.y = height - thing.y;
+        }
+    }
+}
+
+template <>
+void setDeferredPos<Marking> (double width, double height, QList<Marking> &things) {
+    for (Marking &thing : things) {
+        if (!thing.origleft) {
+            thing.x1reverse = !thing.x1reverse;
+            thing.x2reverse = !thing.x2reverse;
+        }
+        if (!thing.origtop) {
+            thing.y1reverse = !thing.y1reverse;
+            thing.y2reverse = !thing.y2reverse;
+        }
+        if (thing.x1reverse) thing.x1 = width - thing.x1;
+        if (thing.x2reverse) thing.x2 = width - thing.x2;
+        if (thing.y1reverse) thing.y1 = height - thing.y1;
+        if (thing.y2reverse) thing.y2 = height - thing.y2;
+        thing.x1reverse = thing.x2reverse = false;
+        thing.y1reverse = thing.y2reverse = false;
+        thing.origleft = thing.origtop = true;
+    }
+}
+
 Part MainWindow::compile() {
 
     QList<QStringList> scriptlines;
@@ -269,7 +333,7 @@ Part MainWindow::compile() {
 
     double curhole = 0.9, curring = 0.508, curx = 0, cury = 0;
     int curnumber = 1;
-    bool origleft = true, origtop = false;
+    bool origleft = true, origtop = false, gotpcbms = false;
     for (const QStringList &tokens : scriptlines) {
         if (matches(tokens, "units", 1))
             part.units = tokens[1].toLower();
@@ -279,9 +343,9 @@ Part MainWindow::compile() {
             part.height = tokens[1].toDouble();
         else if (matches(tokens, "outline", 1))
             part.outline = tokens[1].toDouble();
-        else if (matches(tokens, "hole", 1))
+        else if (matches(tokens, "pthhole", 1))
             curhole = tokens[1].toDouble();
-        else if (matches(tokens, "ring", 1))
+        else if (matches(tokens, "pthring", 1))
             curring = tokens[1].toDouble();
         else if (matches(tokens, "pin", 2, 4)) {
             Pin pin;
@@ -297,6 +361,17 @@ Part MainWindow::compile() {
             part.pins.append(pin);
             curx = pin.x;
             cury = pin.y;
+        } else if (matches(tokens, "pcbhole", 3)) {
+            Hole hole;
+            hole.x = parseCoord(curx, tokens[1]);
+            hole.y = parseCoord(cury, tokens[2]);
+            hole.diameter = fabs(tokens[3].toDouble());
+            //hole.ring = (tokens.size() > 4 ? fabs(tokens[4].toDouble()) : 0); // todo; maybe
+            hole.origleft = origleft; // same deal as with pins above
+            hole.origtop = origtop;
+            part.pcbholes.append(hole);
+            curx = hole.x;
+            cury = hole.y;
         } else if (matches(tokens, "color", 1))
             part.color = tokens[1];
         else if (matches(tokens, "corner", 1))
@@ -346,18 +421,55 @@ Part MainWindow::compile() {
         else if (matches(tokens, "tag", 1, INT_MAX) || matches(tokens, "tags", 1, INT_MAX)) {
             for (int n = 1; n < tokens.size(); ++ n)
                 part.metatags.append(tokens[n]);
+        } else if (matches(tokens, "pcbstroke", 1)) {
+            gotpcbms = true;
+            part.pcbmarkstroke = tokens[1].toDouble();
+        } else if (matches(tokens, "pcbline", 4)) {
+            double x1 = tokens[1].toDouble();
+            double y1 = tokens[2].toDouble();
+            double x2 = tokens[3].toDouble();
+            double y2 = tokens[4].toDouble();
+            part.pcbmarks.append(Marking::makeLine(x1, y1, x2, y2, origleft, origtop));
+        } else if (matches(tokens, "pcbhline", 1)) {
+            double y = tokens[1].toDouble();
+            Marking mark = Marking::makeLine(0, y, 0, y, origleft, origtop);
+            mark.capped = false;
+            mark.x2reverse = true;
+            mark.xbackoff = true;
+            part.pcbmarks.append(mark);
+        } else if (matches(tokens, "pcbvline", 1)) {
+            double x = tokens[1].toDouble();
+            Marking mark = Marking::makeLine(x, 0, x, 0, origleft, origtop);
+            mark.capped = false;
+            mark.y2reverse = true;
+            mark.ybackoff = true;
+            part.pcbmarks.append(mark);
+        } else if (matches(tokens, "pcbdot", 3)) {
+            double x = tokens[1].toDouble();
+            double y = tokens[2].toDouble();
+            double d = tokens[3].toDouble();
+            part.pcbmarks.append(Marking::makeCircle(x, y, d, origleft, origtop));
+        //} else if (matches(tokens, "pcbarrows", 3, 4)) { // arrowedge edge arrowwidth arrowlength [count=1]
         } else
             throw std::runtime_error(QString("unknown directive: %1").arg(tokens.join(",")).toStdString());
     }
 
-    for (Pin &pin : part.pins) { // now that we probably have width/height, apply origin settings
-        if (!pin.origleft) {
-            pin.origleft = true;
-            pin.x = part.width - pin.x;
-        }
-        if (!pin.origtop) {
-            pin.origtop = true;
-            pin.y = part.height - pin.y;
+    // now that we probably have width/height, apply origin settings
+    setDeferredPos(part.width, part.height, part.pins);
+    setDeferredPos(part.width, part.height, part.pcbholes);
+    setDeferredPos(part.width, part.height, part.pcbmarks);
+
+    // same with hline/vline outline width correction
+    if (part.outline > 0) {
+        auto backoff = [](double &a, double &b, double off) {
+            if (a < b) { a += off; b -= off; }
+            else { a -= off; b += off; }
+        };
+        double off = part.outline; // / 2.0; // (in theory, /2 works; in practice, aisler sometimes messes it up)
+        for (Marking &m : part.pcbmarks) {
+            if (m.xbackoff) backoff(m.x1, m.x2, off);
+            if (m.ybackoff) backoff(m.y1, m.y2, off);
+            m.xbackoff = m.ybackoff = false;
         }
     }
 
@@ -402,6 +514,9 @@ Part MainWindow::compile() {
 
     part.sctext = metaval(part.sctext);
     part.bbtext = metaval(part.bbtext);
+
+    if (part.outline > 0 && !gotpcbms)
+        part.pcbmarkstroke = part.outline * 0.75;
 
     // ----
 
@@ -460,10 +575,10 @@ static QDomElement svgLine (QDomDocument doc, QString id, double x1, double y1, 
     QDomElement line = doc.createElement("line");
     if (id != "")
         line.setAttribute("id", id);
-    line.setAttribute("x1", x1);
-    line.setAttribute("y1", y1);
-    line.setAttribute("x2", x2);
-    line.setAttribute("y2", y2);
+    line.setAttribute("x1", pretty(x1));
+    line.setAttribute("y1", pretty(y1));
+    line.setAttribute("x2", pretty(x2));
+    line.setAttribute("y2", pretty(y2));
     line.setAttribute("fill", style.fill);
     line.setAttribute("stroke", style.stroke);
     line.setAttribute("stroke-width", pretty(style.strokeWidth));
@@ -596,6 +711,28 @@ static QDomDocument generatePCB (const Part &part) {
         }
         pad.setAttribute("id", id);
         copper.appendChild(pad);
+    }
+
+    for (int n = 0; n < part.pcbholes.size(); ++ n) {
+        const Hole &hole = part.pcbholes[n];
+        QString id = QString("nonconn%1").arg(n);
+        SVGStyle sthole = { "black", "black", 0 };
+        copper.appendChild(svgCircle(svg, id, hole.x, hole.y, hole.diameter / 2.0, sthole));
+    }
+
+    if (part.pcbmarkstroke > 0) {
+        for (const Marking &mark : part.pcbmarks) {
+            if (mark.shape == Marking::Circle) {
+                double stroke = qMin(part.pcbmarkstroke, mark.diam / 2.0);
+                if (stroke < 1e-6)
+                    continue;
+                SVGStyle stmark = { "none", "#000000", stroke };
+                silkscreen.appendChild(svgCircle(svg, "", mark.x1, mark.y1, mark.diam/2.0, stmark, true));
+            } else if (mark.shape == Marking::Line) {
+                SVGStyle stmark = { "none", "#000000", part.pcbmarkstroke };
+                silkscreen.appendChild(svgLine(svg, "", mark.x1, mark.y1, mark.x2, mark.y2, stmark, mark.capped));
+            }
+        }
     }
 
     return svg;
@@ -1150,7 +1287,7 @@ void MainWindow::saveBasicPart(const Part &part, const PartFilenames &names) {
     QDomDocument icon = generateIcon(part);
     QDomDocument fzp = generateFZP(part, names);
 
-#if 0 // debugging
+#if 1 // debugging
     writeXML(pcb, names.pcb);
     writeXML(breadboard, names.breadboard);
     writeXML(schematic, names.schematic);
@@ -1216,14 +1353,4 @@ void MainWindow::showPartPreviews(const QDomDocument &bb, const QDomDocument &sc
     ui->svgBreadboard->renderer()->setAspectRatioMode(Qt::KeepAspectRatio);
     ui->svgSchematic->load(sc.toByteArray());
     ui->svgSchematic->renderer()->setAspectRatioMode(Qt::KeepAspectRatio);
-}
-
-void MainWindow::on_actLocateMinizip_triggered()
-{
-    QString minizip = settings.value("minizip").toString();
-    minizip = QFileDialog::getOpenFileName(this, "Locate minizip", minizip);
-    if (minizip == "")
-        return;
-    minizip = QFileInfo(minizip).absoluteFilePath();
-    settings.setValue("minizip", minizip);
 }

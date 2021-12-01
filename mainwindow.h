@@ -35,6 +35,57 @@ struct Pin {
     bool origtop;
 };
 
+struct Hole { // pcb cutout holes (not pth pin holes)
+    double x;
+    double y;
+    double diameter;
+    //double ring; // todo: maybe
+    Hole () : x(0), y(0), diameter(0) /*, ring(0)*/ { }
+    // temporary parsing context stuff
+    bool origleft;
+    bool origtop;
+};
+
+struct Marking {
+    enum Shape { Invalid=0, Circle, Line };
+    Shape shape;
+    double x1, y1;
+    double x2, y2;
+    double diam;
+    bool capped;
+    explicit Marking (Shape shape = Invalid) : shape(shape), x1(0), y1(0), x2(0), y2(0), diam(0),
+        capped(true), x1reverse(false), y1reverse(false), x2reverse(false), y2reverse(false),
+        xbackoff(false), ybackoff(false) { }
+    static Marking makeCircle (double x, double y, double d, bool origleft, bool origtop) {
+        Marking m(Circle);
+        m.x1 = x;
+        m.y1 = y;
+        m.diam = d;
+        m.origleft = origleft;
+        m.origtop = origtop;
+        return m;
+    }
+    static Marking makeLine (double x1, double y1, double x2, double y2, bool origleft, bool origtop) {
+        Marking m(Line);
+        m.x1 = x1;
+        m.y1 = y1;
+        m.x2 = x2;
+        m.y2 = y2;
+        m.origleft = origleft;
+        m.origtop = origtop;
+        return m;
+    }
+    // temporary parsing context stuff
+    bool origleft;
+    bool origtop;
+    bool x1reverse, y1reverse;
+    bool x2reverse, y2reverse;
+    bool xbackoff, ybackoff;
+};
+
+// todo: a bunch of things (above) have deferred positions now,
+// need to find a cleaner way of handling that.
+
 struct Part {
     QString units;  // todo: define a set of units instead of allowing free text. mm, in, micron, mil, thou probably
     double width;
@@ -56,6 +107,9 @@ struct Part {
     QString sctext;
     bool scpinlabels;
     bool scpinnumbers;
+    QList<Hole> pcbholes;
+    QList<Marking> pcbmarks;
+    double pcbmarkstroke; // todo: different default depending on units
     PropertyMap metadata;
     PropertyMap metaprops;
     QStringList metatags;
@@ -63,7 +117,7 @@ struct Part {
     Part () : units("mm"), width(0), height(0), outline(0.254), color("#116b9e"), corner(0), schematic("edge"),
         mingrid{0,0}, extragrid{0,0}, bbtext("$partnumber"), bbtextcolor("#ffffff"), bbtextsize(5.08),
         bbpinlabels(true), bbpinlabelcolor("#c5e6f9"), bbpinlabelsize(2.54), sctext("$title"), scpinlabels(true),
-        scpinnumbers(true), metatags({"fritzpart"}) { }
+        scpinnumbers(true), pcbmarkstroke(0.254 * 0.75), metatags({"fritzpart"}) { }
 };
 
 struct PartFilenames {
