@@ -38,6 +38,7 @@ FORMS += \
     mainwindow.ui
 
 DISTFILES += \
+    README.md \
     about.html \
     dist/distclean.bat \
     dist/installer.nsi \
