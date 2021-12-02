@@ -36,6 +36,8 @@ https://github.com/JC3/fritzpart
 #include <QCloseEvent>
 #include <QSvgRenderer>
 #include <QDesktopServices>
+#include <QResource>
+#include <QStandardPaths>
 #include <stdexcept>
 #include <iomanip>
 #include <sstream>
@@ -70,6 +72,9 @@ MainWindow::MainWindow(QWidget *parent) :
             }
         }
     }
+    // initial default script path
+    if (settings.value("scriptpath").toString().isEmpty())
+        settings.setValue("scriptpath", QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation));
 }
 
 MainWindow::~MainWindow()
@@ -95,6 +100,15 @@ void MainWindow::on_actShowOutput_triggered(bool checked)
 void MainWindow::on_actBackup_triggered(bool checked)
 {
     settings.setValue("backupfzpz", checked);
+}
+
+void MainWindow::showAboutBox () {
+    QString content = QString::fromLatin1(QResource(":/help/about").uncompressedData())
+            .replace("%APPNAME%", QApplication::applicationDisplayName())
+            .replace("%VERSION%", APPLICATION_VERSION)
+            .replace("%DATE%", __DATE__)
+            .replace("%TIME%", __TIME__);
+    QMessageBox::about(this, "About", content);
 }
 
 void MainWindow::on_actOpenFile_triggered()
@@ -245,7 +259,8 @@ void MainWindow::on_actCompile_triggered()
 {
     try {
         Part part = compile();
-        saveBasicPart(part, PartFilenames(part.filename, curfilename));
+        QString defpath = (curfilename == "" ? QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) : curfilename);
+        saveBasicPart(part, PartFilenames(part.filename, defpath));
     } catch (const std::exception &x) {
         QMessageBox::critical(this, "Error Compiling Part", x.what());
     }
@@ -255,7 +270,8 @@ void MainWindow::on_actCompileTo_triggered()
 {
     try {
         Part part = compile();
-        PartFilenames names(part.filename, curfilename);
+        QString defpath = (curfilename == "" ? QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) : curfilename);
+        PartFilenames names(part.filename, defpath);
         names.fzpz = QFileDialog::getSaveFileName(this, "Compile To", names.fzpz, "Fritzing Part (*.fzpz)");
         if (names.fzpz == "")
             return;
@@ -1291,8 +1307,12 @@ PartFilenames::PartFilenames (QString prefix, QString builddir) {
     if (prefix != "") {
         prefix = sanitize(prefix);
         fzpz = QString("%1.fzpz").arg(prefix);
-        if (builddir != "")
-            fzpz = QFileInfo(builddir).absoluteDir().absoluteFilePath(fzpz);
+        if (builddir != "") {
+            if (QFileInfo(builddir).isDir())
+                fzpz = QDir(builddir).absoluteFilePath(fzpz);
+            else
+                fzpz = QFileInfo(builddir).absoluteDir().absoluteFilePath(fzpz);
+        }
         fzp = QString("%1.fzp").arg(prefix);
         icon = QString("%1_icon.svg").arg(prefix);
         breadboard = QString("%1_breadboard.svg").arg(prefix);
@@ -1310,7 +1330,7 @@ void MainWindow::saveBasicPart(const Part &part, const PartFilenames &names) {
     QDomDocument icon = generateIcon(part);
     QDomDocument fzp = generateFZP(part, names);
 
-#if 1 // debugging
+#if 0 // debugging
     writeXML(pcb, names.pcb);
     writeXML(breadboard, names.breadboard);
     writeXML(schematic, names.schematic);

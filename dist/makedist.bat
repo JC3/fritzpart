@@ -21,10 +21,10 @@
 :: https://github.com/JC3/fritzpart
 ::------------------------------------------------------------------------
 
-rmdir /S /Q debug
-rmdir /S /Q release
-del .qmake.stash
-del Makefile Makefile.* fritzpart_resource.rc
-del *.fzp *.fzpz *.svg *.fritzpart.bak
-del examples\*.fzpz examples\*.fritzpart.bak
-del dist\version.nsh
+cp ..\release\fritzpart.exe .
+cp ..\contrib\minizip.exe .
+cp ..\LICENSE .
+cp ..\README.md .
+mkdir examples
+cp ..\examples\*.txt examples\
+windeployqt fritzpart.exe --no-quick-import --no-system-d3d-compiler --no-virtualkeyboard --no-webkit2 --no-angle --no-opengl-sw

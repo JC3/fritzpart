@@ -6,6 +6,12 @@ release/
 *.fzz
 *.svg
 *.fritzpart.bak
+fritzpart_resource.rc
+
+dist/
+!dist/installer.nsi
+!dist/makedist.bat
+!dist/distclean.bat
 
 # C++ objects and libs
 *.slo

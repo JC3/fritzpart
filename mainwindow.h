@@ -164,6 +164,7 @@ public:
 public slots:
     void loadFile (QString filename);
     void saveFile (QString filename);
+    void showAboutBox ();
 private slots:
     void on_actOpenFile_triggered();
     void on_actSaveFile_triggered();
@@ -174,7 +175,6 @@ private slots:
     void on_actPreview_triggered();
     void on_actCompileTo_triggered();
     void on_actShowOutput_triggered(bool checked);
-
     void on_actBackup_triggered(bool checked);
 
 protected:

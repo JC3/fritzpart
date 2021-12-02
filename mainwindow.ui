@@ -13,6 +13,10 @@
   <property name="windowTitle">
    <string>Fritzpart</string>
   </property>
+  <property name="windowIcon">
+   <iconset resource="fritzpart.qrc">
+    <normaloff>:/icon/application</normaloff>:/icon/application</iconset>
+  </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QHBoxLayout" name="horizontalLayout" stretch="5,0,2">
     <item>
@@ -414,8 +418,15 @@
     <addaction name="separator"/>
     <addaction name="menuSettings"/>
    </widget>
+   <widget class="QMenu" name="menuHelp">
+    <property name="title">
+     <string>Help</string>
+    </property>
+    <addaction name="actHelpAbout"/>
+   </widget>
    <addaction name="menuFile"/>
    <addaction name="menuBuild"/>
+   <addaction name="menuHelp"/>
   </widget>
   <action name="actOpenFile">
    <property name="text">
@@ -494,6 +505,11 @@
     <string>Back up fzpz before overwrite</string>
    </property>
   </action>
+  <action name="actHelpAbout">
+   <property name="text">
+    <string>About...</string>
+   </property>
+  </action>
  </widget>
  <customwidgets>
   <customwidget>
@@ -503,7 +519,9 @@
    <container>1</container>
   </customwidget>
  </customwidgets>
- <resources/>
+ <resources>
+  <include location="fritzpart.qrc"/>
+ </resources>
  <connections>
   <connection>
    <sender>btnCompile</sender>
@@ -569,5 +587,24 @@
     </hint>
    </hints>
   </connection>
+  <connection>
+   <sender>actHelpAbout</sender>
+   <signal>triggered()</signal>
+   <receiver>MainWindow</receiver>
+   <slot>showAboutBox()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>-1</x>
+     <y>-1</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>440</x>
+     <y>254</y>
+    </hint>
+   </hints>
+  </connection>
  </connections>
+ <slots>
+  <slot>showAboutBox()</slot>
+ </slots>
 </ui>
