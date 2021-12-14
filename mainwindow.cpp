@@ -38,6 +38,7 @@ https://github.com/JC3/fritzpart
 #include <QDesktopServices>
 #include <QResource>
 #include <QStandardPaths>
+#include <QQueue>
 #include <stdexcept>
 #include <iomanip>
 #include <sstream>
@@ -45,7 +46,8 @@ https://github.com/JC3/fritzpart
 
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
-    ui(new Ui::MainWindow)
+    ui(new Ui::MainWindow),
+    helpdlg(nullptr)
 {
     ui->setupUi(this);
     ui->actShowOutput->setChecked(settings.value("showoutput", true).toBool());
@@ -109,6 +111,17 @@ void MainWindow::showAboutBox () {
             .replace("%DATE%", __DATE__)
             .replace("%TIME%", __TIME__);
     QMessageBox::about(this, "About", content);
+}
+
+
+void MainWindow::on_actHelpHelp_triggered()
+{
+    if (!helpdlg) {
+        helpdlg = new HelpWindow(this);
+        helpdlg->setWindowTitle(basetitle + " Help");
+        helpdlg->setHelpFont(font(), 1.1);
+    }
+    helpdlg->display();
 }
 
 void MainWindow::on_actOpenFile_triggered()
@@ -1396,4 +1409,9 @@ void MainWindow::showPartPreviews(const QDomDocument &bb, const QDomDocument &sc
     ui->svgBreadboard->renderer()->setAspectRatioMode(Qt::KeepAspectRatio);
     ui->svgSchematic->load(sc.toByteArray());
     ui->svgSchematic->renderer()->setAspectRatioMode(Qt::KeepAspectRatio);
+}
+
+void MainWindow::on_actOpenIssues_triggered()
+{
+    QDesktopServices::openUrl(QUrl("https://www.github.com/JC3/fritzpart/issues"));
 }

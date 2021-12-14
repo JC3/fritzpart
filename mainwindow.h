@@ -28,6 +28,7 @@ https://github.com/JC3/fritzpart
 #include <QSettings>
 #include <QMap>
 #include <QDomDocument>
+#include "helpwindow.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -176,6 +177,8 @@ private slots:
     void on_actCompileTo_triggered();
     void on_actShowOutput_triggered(bool checked);
     void on_actBackup_triggered(bool checked);
+    void on_actHelpHelp_triggered();
+    void on_actOpenIssues_triggered();
 
 protected:
     void closeEvent(QCloseEvent *event);
@@ -184,6 +187,7 @@ private:
     QSettings settings;
     QString curfilename;
     QString basetitle;
+    HelpWindow *helpdlg;
     bool promptSaveIfModified ();
     void setCurrentFileName (QString filename) { curfilename = filename; updateWindowTitle(); }
     void saveBasicPart (const Part &part, const PartFilenames &names);

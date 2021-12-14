@@ -28,13 +28,16 @@ QT       += core gui xml svg widgets
 CONFIG += c++17
 
 SOURCES += \
+    helpwindow.cpp \
     main.cpp \
     mainwindow.cpp
 
 HEADERS += \
+    helpwindow.h \
     mainwindow.h
 
 FORMS += \
+    helpwindow.ui \
     mainwindow.ui
 
 DISTFILES += \
@@ -44,7 +47,8 @@ DISTFILES += \
     dist/installer.nsi \
     dist/makedist.bat \
     distclean.bat \
-    examples/test.txt
+    examples/test.txt \
+    manual.css
 
 RESOURCES += \
     fritzpart.qrc

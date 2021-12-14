@@ -4,5 +4,7 @@
     </qresource>
     <qresource prefix="/help">
         <file alias="about">about.html</file>
+        <file alias="manual">README.md</file>
+        <file>manual.css</file>
     </qresource>
 </RCC>

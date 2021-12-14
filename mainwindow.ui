@@ -422,6 +422,9 @@
     <property name="title">
      <string>Help</string>
     </property>
+    <addaction name="actHelpHelp"/>
+    <addaction name="separator"/>
+    <addaction name="actOpenIssues"/>
     <addaction name="actHelpAbout"/>
    </widget>
    <addaction name="menuFile"/>
@@ -508,6 +511,19 @@
   <action name="actHelpAbout">
    <property name="text">
     <string>About...</string>
+   </property>
+  </action>
+  <action name="actHelpHelp">
+   <property name="text">
+    <string>User Manual...</string>
+   </property>
+   <property name="shortcut">
+    <string>F1</string>
+   </property>
+  </action>
+  <action name="actOpenIssues">
+   <property name="text">
+    <string>Bugs / Questions...</string>
    </property>
   </action>
  </widget>
