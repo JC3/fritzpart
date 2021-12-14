@@ -1,0 +1,10 @@
+<RCC>
+    <qresource prefix="/icon">
+        <file alias="application">contrib/ic.ico</file>
+    </qresource>
+    <qresource prefix="/help">
+        <file alias="about">about.html</file>
+        <file alias="manual">README.md</file>
+        <file>manual.css</file>
+    </qresource>
+</RCC>

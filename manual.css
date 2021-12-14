@@ -1,0 +1,26 @@
+span {
+  margin: 0;
+  padding: 0;
+}
+p {
+  margin: 1em 0;
+  padding: 0;
+}
+p.code {
+  margin: 0;
+  margin-left: 2em;
+}
+body {
+  padding: 1em;
+}
+body > p, table {
+  margin-left: 1em;
+}
+table {
+  margin-top: 1em;
+  border-collapse: collapse;
+}
+td {
+  padding: 0.25em;
+}
+

@@ -33,16 +33,50 @@ https://github.com/JC3/fritzpart
 #include <QProcess>
 #include <QDate>
 #include <QRegExp>
+#include <QCloseEvent>
+#include <QSvgRenderer>
+#include <QDesktopServices>
+#include <QResource>
+#include <QStandardPaths>
+#include <QQueue>
 #include <stdexcept>
 #include <iomanip>
 #include <sstream>
 #include <cmath>
 
-MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent)
-    , ui(new Ui::MainWindow)
+MainWindow::MainWindow(QWidget *parent) :
+    QMainWindow(parent),
+    ui(new Ui::MainWindow),
+    helpdlg(nullptr)
 {
     ui->setupUi(this);
+    ui->actShowOutput->setChecked(settings.value("showoutput", true).toBool());
+    ui->actBackup->setChecked(settings.value("backupfzpz", true).toBool());
+    basetitle = windowTitle();
+    connect(ui->txtScript->document(), SIGNAL(modificationChanged(bool)), this, SLOT(updateWindowTitle()));
+    updateWindowTitle();
+    // look for minizip if necessary (so on first install the user doesn't
+    // have to find it themselves).
+    if (settings.value("minizip").toString().isEmpty()) {
+        const QStringList places = {
+            QDir(QApplication::applicationDirPath()).absoluteFilePath("contrib"),
+            QDir::current().absoluteFilePath("contrib"),
+            QApplication::applicationDirPath(),
+            QDir::currentPath()
+        };
+        qDebug() << "looking for minizip...";
+        for (const QString &place : places) {
+            QString path = QDir(place).absoluteFilePath("minizip.exe");
+            if (QFile::exists(path)) {
+                qDebug() << "found" << path;
+                settings.setValue("minizip", path);
+                break;
+            }
+        }
+    }
+    // initial default script path
+    if (settings.value("scriptpath").toString().isEmpty())
+        settings.setValue("scriptpath", QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation));
 }
 
 MainWindow::~MainWindow()
@@ -50,6 +84,45 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
+void MainWindow::on_actLocateMinizip_triggered()
+{
+    QString minizip = settings.value("minizip").toString();
+    minizip = QFileDialog::getOpenFileName(this, "Locate minizip", minizip);
+    if (minizip == "")
+        return;
+    minizip = QFileInfo(minizip).absoluteFilePath();
+    settings.setValue("minizip", minizip);
+}
+
+void MainWindow::on_actShowOutput_triggered(bool checked)
+{
+    settings.setValue("showoutput", checked);
+}
+
+void MainWindow::on_actBackup_triggered(bool checked)
+{
+    settings.setValue("backupfzpz", checked);
+}
+
+void MainWindow::showAboutBox () {
+    QString content = QString::fromLatin1(QResource(":/help/about").uncompressedData())
+            .replace("%APPNAME%", QApplication::applicationDisplayName())
+            .replace("%VERSION%", APPLICATION_VERSION)
+            .replace("%DATE%", __DATE__)
+            .replace("%TIME%", __TIME__);
+    QMessageBox::about(this, "About", content);
+}
+
+
+void MainWindow::on_actHelpHelp_triggered()
+{
+    if (!helpdlg) {
+        helpdlg = new HelpWindow(this);
+        helpdlg->setWindowTitle(basetitle + " Help");
+        helpdlg->setHelpFont(font(), 1.1);
+    }
+    helpdlg->display();
+}
 
 void MainWindow::on_actOpenFile_triggered()
 {
@@ -62,13 +135,44 @@ void MainWindow::on_actOpenFile_triggered()
 void MainWindow::on_actSaveFile_triggered()
 {
     QString prev = settings.value("scriptpath").toString();
+    if (curfilename != "")
+        prev = curfilename;
     QString filename = QFileDialog::getSaveFileName(this, "Save File...", prev, "*.txt");
     if (filename != "")
         saveFile(filename);
 }
 
+void MainWindow::on_actNewFile_triggered()
+{
+    if (promptSaveIfModified()) {
+        //ui->txtScript->setDocument(new QTextDocument(ui->txtScript));
+        // whatever:
+        ui->txtScript->clear();
+        setCurrentFileName("");
+        clearPartPreviews();
+    }
+}
+
+bool MainWindow::promptSaveIfModified() {
+    bool confirmed = false;
+    if (ui->txtScript->document()->isModified()) {
+        int action = QMessageBox::warning(this, "Confirm Action", "there are unsaved changes. do you want to save them?",
+                                          QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+        if (action == QMessageBox::Save) {
+            ui->actSaveFile->trigger();
+            confirmed = !ui->txtScript->document()->isModified();
+        } else if (action == QMessageBox::Discard) {
+            confirmed = true;
+        }
+    } else {
+        confirmed = true;
+    }
+    return confirmed;
+}
 
 void MainWindow::loadFile(QString filename) {
+    if (!promptSaveIfModified())
+        return;
     try {
         QFile file(filename);
         if (!file.open(QFile::ReadOnly | QFile::Text))
@@ -77,7 +181,10 @@ void MainWindow::loadFile(QString filename) {
         if (script == "")
             throw std::runtime_error("File contains no text.");
         ui->txtScript->setPlainText(script);
+        ui->txtScript->document()->setModified(false);
+        setCurrentFileName(QFileInfo(file).absoluteFilePath());
         settings.setValue("scriptpath", QFileInfo(file).absolutePath());
+        clearPartPreviews();
     } catch (const std::exception &x) {
         QMessageBox::critical(this, "Error Loading File", x.what());
     }
@@ -92,12 +199,32 @@ void MainWindow::saveFile(QString filename) {
         QByteArray data = ui->txtScript->toPlainText().toUtf8();
         if (file.write(data) != data.length())
             throw std::runtime_error(file.errorString().toStdString());
+        setCurrentFileName(QFileInfo(file).absoluteFilePath());
         settings.setValue("scriptpath", QFileInfo(file).absolutePath());
+        ui->txtScript->document()->setModified(false);
     } catch (const std::exception &x) {
         QMessageBox::critical(this, "Error Saving File", x.what());
     }
 }
 
+void MainWindow::closeEvent(QCloseEvent *event) {
+    if (promptSaveIfModified())
+        event->accept();
+    else
+        event->ignore();
+}
+
+void MainWindow::updateWindowTitle() {
+    bool mod = ui->txtScript->document()->isModified();
+    QString name = curfilename.isEmpty() ? "untitled" : QFileInfo(curfilename).fileName();
+    setWindowTitle(QString("%1%2 - %3").arg(mod ? "*" : "").arg(name, basetitle));
+}
+
+void MainWindow::clearPartPreviews () {
+    ui->svgBreadboard->load(QByteArray());
+    ui->svgPCB->load(QByteArray());
+    ui->svgSchematic->load(QByteArray());
+}
 
 static bool matches (const QStringList &tokens, QString command, int minparms = -1, int maxparms = -1) {
     if (tokens.empty() || QString::compare(tokens[0], command, Qt::CaseInsensitive))
@@ -130,9 +257,89 @@ static double parseCoord (double cur, QString coord) {
         return coord.toDouble();
 }
 
+static bool parseBool (QString str) {
+    static QStringList trues = { "true", "yes", "on", "1" };
+    static QStringList falses = { "false", "no", "off", "0" };
+    if (trues.contains(str, Qt::CaseInsensitive))
+        return true;
+    else if (falses.contains(str, Qt::CaseInsensitive))
+        return false;
+    else
+        throw std::runtime_error(QString("invalid boolean value: %1").arg(str).toStdString());
+}
 
 void MainWindow::on_actCompile_triggered()
 {
+    try {
+        Part part = compile();
+        QString defpath = (curfilename == "" ? QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) : curfilename);
+        saveBasicPart(part, PartFilenames(part.filename, defpath));
+    } catch (const std::exception &x) {
+        QMessageBox::critical(this, "Error Compiling Part", x.what());
+    }
+}
+
+void MainWindow::on_actCompileTo_triggered()
+{
+    try {
+        Part part = compile();
+        QString defpath = (curfilename == "" ? QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) : curfilename);
+        PartFilenames names(part.filename, defpath);
+        names.fzpz = QFileDialog::getSaveFileName(this, "Compile To", names.fzpz, "Fritzing Part (*.fzpz)");
+        if (names.fzpz == "")
+            return;
+        saveBasicPart(part, names);
+    } catch (const std::exception &x) {
+        QMessageBox::critical(this, "Error Compiling Part", x.what());
+    }
+}
+
+void MainWindow::on_actPreview_triggered()
+{
+    try {
+        Part part = compile();
+        showPartPreviews(part);
+    } catch (const std::exception &x) {
+        QMessageBox::critical(this, "Error Compiling Part", x.what());
+    }
+}
+
+template <typename T>
+static void setDeferredPos (double width, double height, QList<T> &things) {
+    for (T &thing : things) {
+        if (!thing.origleft) {
+            thing.origleft = true;
+            thing.x = width - thing.x;
+        }
+        if (!thing.origtop) {
+            thing.origtop = true;
+            thing.y = height - thing.y;
+        }
+    }
+}
+
+template <>
+void setDeferredPos<Marking> (double width, double height, QList<Marking> &things) {
+    for (Marking &thing : things) {
+        if (!thing.origleft) {
+            thing.x1reverse = !thing.x1reverse;
+            thing.x2reverse = !thing.x2reverse;
+        }
+        if (!thing.origtop) {
+            thing.y1reverse = !thing.y1reverse;
+            thing.y2reverse = !thing.y2reverse;
+        }
+        if (thing.x1reverse) thing.x1 = width - thing.x1;
+        if (thing.x2reverse) thing.x2 = width - thing.x2;
+        if (thing.y1reverse) thing.y1 = height - thing.y1;
+        if (thing.y2reverse) thing.y2 = height - thing.y2;
+        thing.x1reverse = thing.x2reverse = false;
+        thing.y1reverse = thing.y2reverse = false;
+        thing.origleft = thing.origtop = true;
+    }
+}
+
+Part MainWindow::compile() {
 
     QList<QStringList> scriptlines;
     Part part;
@@ -169,6 +376,8 @@ void MainWindow::on_actCompile_triggered()
         if (!tokens.empty() && !tokens[0].startsWith("#"))
             scriptlines.append(tokens);
     }
+    if (indesc)
+        throw std::runtime_error("end of file in multiline description block");
 
     // ---- parse
 
@@ -176,7 +385,7 @@ void MainWindow::on_actCompile_triggered()
 
     double curhole = 0.9, curring = 0.508, curx = 0, cury = 0;
     int curnumber = 1;
-    bool origleft = true, origtop = false;
+    bool origleft = true, origtop = false, gotpcbms = false;
     for (const QStringList &tokens : scriptlines) {
         if (matches(tokens, "units", 1))
             part.units = tokens[1].toLower();
@@ -186,9 +395,9 @@ void MainWindow::on_actCompile_triggered()
             part.height = tokens[1].toDouble();
         else if (matches(tokens, "outline", 1))
             part.outline = tokens[1].toDouble();
-        else if (matches(tokens, "hole", 1))
+        else if (matches(tokens, "pthhole", 1))
             curhole = tokens[1].toDouble();
-        else if (matches(tokens, "ring", 1))
+        else if (matches(tokens, "pthring", 1))
             curring = tokens[1].toDouble();
         else if (matches(tokens, "pin", 2, 4)) {
             Pin pin;
@@ -204,6 +413,17 @@ void MainWindow::on_actCompile_triggered()
             part.pins.append(pin);
             curx = pin.x;
             cury = pin.y;
+        } else if (matches(tokens, "pcbhole", 3)) {
+            Hole hole;
+            hole.x = parseCoord(curx, tokens[1]);
+            hole.y = parseCoord(cury, tokens[2]);
+            hole.diameter = fabs(tokens[3].toDouble());
+            //hole.ring = (tokens.size() > 4 ? fabs(tokens[4].toDouble()) : 0); // todo; maybe
+            hole.origleft = origleft; // same deal as with pins above
+            hole.origtop = origtop;
+            part.pcbholes.append(hole);
+            curx = hole.x;
+            cury = hole.y;
         } else if (matches(tokens, "color", 1))
             part.color = tokens[1];
         else if (matches(tokens, "corner", 1))
@@ -219,10 +439,18 @@ void MainWindow::on_actCompile_triggered()
             part.extragrid[1] = abs(tokens[2].toInt());
         } else if (matches(tokens, "sctext", 1)) {
             part.sctext = tokens[1];
+        } else if (matches(tokens, "sclabels", 1)) {
+            part.scpinlabels = parseBool(tokens[1]);
+        } else if (matches(tokens, "scnumbers", 1)) {
+            part.scpinnumbers = parseBool(tokens[1]);
         } else if (matches(tokens, "bbtext", 1, 3)) {
             part.bbtext = tokens[1];
             if (tokens.size() > 2) part.bbtextcolor = tokens[2];
             if (tokens.size() > 3) part.bbtextsize = tokens[3].toDouble();
+        } else if (matches(tokens, "bblabels", 1, 3)) {
+            part.bbpinlabels = parseBool(tokens[1]);
+            if (tokens.size() > 2) part.bbpinlabelcolor = tokens[2];
+            if (tokens.size() > 3) part.bbpinlabelsize = tokens[3].toDouble();
         } else if (matches(tokens, "origin", 1, INT_MAX)) {
             for (int n = 1; n < tokens.size(); ++ n) {
                 if (tokens[n].startsWith("l", Qt::CaseInsensitive))
@@ -245,18 +473,55 @@ void MainWindow::on_actCompile_triggered()
         else if (matches(tokens, "tag", 1, INT_MAX) || matches(tokens, "tags", 1, INT_MAX)) {
             for (int n = 1; n < tokens.size(); ++ n)
                 part.metatags.append(tokens[n]);
+        } else if (matches(tokens, "pcbstroke", 1)) {
+            gotpcbms = true;
+            part.pcbmarkstroke = tokens[1].toDouble();
+        } else if (matches(tokens, "pcbline", 4)) {
+            double x1 = tokens[1].toDouble();
+            double y1 = tokens[2].toDouble();
+            double x2 = tokens[3].toDouble();
+            double y2 = tokens[4].toDouble();
+            part.pcbmarks.append(Marking::makeLine(x1, y1, x2, y2, origleft, origtop));
+        } else if (matches(tokens, "pcbhline", 1)) {
+            double y = tokens[1].toDouble();
+            Marking mark = Marking::makeLine(0, y, 0, y, origleft, origtop);
+            mark.capped = false;
+            mark.x2reverse = true;
+            mark.xbackoff = true;
+            part.pcbmarks.append(mark);
+        } else if (matches(tokens, "pcbvline", 1)) {
+            double x = tokens[1].toDouble();
+            Marking mark = Marking::makeLine(x, 0, x, 0, origleft, origtop);
+            mark.capped = false;
+            mark.y2reverse = true;
+            mark.ybackoff = true;
+            part.pcbmarks.append(mark);
+        } else if (matches(tokens, "pcbdot", 3)) {
+            double x = tokens[1].toDouble();
+            double y = tokens[2].toDouble();
+            double d = tokens[3].toDouble();
+            part.pcbmarks.append(Marking::makeCircle(x, y, d, origleft, origtop));
+        //} else if (matches(tokens, "pcbarrows", 3, 4)) { // arrowedge edge arrowwidth arrowlength [count=1]
         } else
-            qWarning() << "ignoring unknown directive:" << tokens;
+            throw std::runtime_error(QString("unknown directive: %1").arg(tokens.join(",")).toStdString());
     }
 
-    for (Pin &pin : part.pins) { // now that we probably have width/height, apply origin settings
-        if (!pin.origleft) {
-            pin.origleft = true;
-            pin.x = part.width - pin.x;
-        }
-        if (!pin.origtop) {
-            pin.origtop = true;
-            pin.y = part.height - pin.y;
+    // now that we probably have width/height, apply origin settings
+    setDeferredPos(part.width, part.height, part.pins);
+    setDeferredPos(part.width, part.height, part.pcbholes);
+    setDeferredPos(part.width, part.height, part.pcbmarks);
+
+    // same with hline/vline outline width correction
+    if (part.outline > 0) {
+        auto backoff = [](double &a, double &b, double off) {
+            if (a < b) { a += off; b -= off; }
+            else { a -= off; b += off; }
+        };
+        double off = part.outline; // / 2.0; // (in theory, /2 works; in practice, aisler sometimes messes it up)
+        for (Marking &m : part.pcbmarks) {
+            if (m.xbackoff) backoff(m.x1, m.x2, off);
+            if (m.ybackoff) backoff(m.y1, m.y2, off);
+            m.xbackoff = m.ybackoff = false;
         }
     }
 
@@ -284,7 +549,11 @@ void MainWindow::on_actCompile_triggered()
     part.metadata["description"] = part.metadata["description"].trimmed();
 
     if (part.filename == "")
-        part.filename = getany({ "moduleid", "title", "partnumber", "family" }, "compiled");
+        part.filename = getany({ "moduleid", "title", "partnumber", "family" }, "");
+    if (part.filename == "") {
+        throw std::runtime_error("could not determine output filename: you must specify at "
+                                 "least one of: filename, moduleid, title, partnumber, or family");
+    }
     setdef("partnumber", { "title", "family" }, part.filename);
     setdef("family", { "partnumber" });
     setdef("title", { "partnumber", "family" });
@@ -298,13 +567,17 @@ void MainWindow::on_actCompile_triggered()
     part.sctext = metaval(part.sctext);
     part.bbtext = metaval(part.bbtext);
 
+    if (part.outline > 0 && !gotpcbms)
+        part.pcbmarkstroke = part.outline * 0.75;
+
     // ----
 
     qDebug() << "size" << part.width << part.height << part.units;
     qDebug() << "outline" << part.outline;
     for (const Pin &pin : part.pins)
         qDebug() << "  pin" << pin.number << pin.name << "@" << pin.x << pin.y << "d=" << pin.hole << "r=" << pin.ring << (pin.square ? "square" : "round");
-    saveBasicPart(part, part.filename);
+
+    return part;
 
 }
 
@@ -313,6 +586,10 @@ static QDomElement initDocument (QDomDocument &doc, QString root) {
     QDomProcessingInstruction dec = doc.createProcessingInstruction("xml", "version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"");
     QDomComment info = doc.createComment("Generated by fritzpart.");
     QDomElement node = doc.createElement(root);
+    // hack alert
+    if (root == "svg")
+        node.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    // moving on...
     doc.appendChild(dec);
     doc.appendChild(info);
     doc.appendChild(node);
@@ -350,10 +627,10 @@ static QDomElement svgLine (QDomDocument doc, QString id, double x1, double y1, 
     QDomElement line = doc.createElement("line");
     if (id != "")
         line.setAttribute("id", id);
-    line.setAttribute("x1", x1);
-    line.setAttribute("y1", y1);
-    line.setAttribute("x2", x2);
-    line.setAttribute("y2", y2);
+    line.setAttribute("x1", pretty(x1));
+    line.setAttribute("y1", pretty(y1));
+    line.setAttribute("x2", pretty(x2));
+    line.setAttribute("y2", pretty(y2));
     line.setAttribute("fill", style.fill);
     line.setAttribute("stroke", style.stroke);
     line.setAttribute("stroke-width", pretty(style.strokeWidth));
@@ -399,7 +676,7 @@ static QDomElement svgCircle (QDomDocument doc, QString id, double cx, double cy
     return circle;
 }
 
-enum SVGTextAlign { LeftAlign, CenterAlign, RightAlign };
+enum SVGTextAlign { LeftAlign, CenterAlign, RightAlign, BottomCenterAlign, TopCenterAlign };
 
 struct SVGTextStyle {
     QString color;
@@ -409,13 +686,15 @@ struct SVGTextStyle {
 static const char * svgTextAnchor (SVGTextAlign align) {
     switch (align) {
     case LeftAlign: return "start";
+    case TopCenterAlign: return "middle";
+    case BottomCenterAlign: return "middle";
     case CenterAlign: return "middle";
     case RightAlign: return "end";
     default: return "";
     }
 }
 
-// <text class='text' font-family="'Droid Sans'" stroke='none' stroke-width='0' fill='#8c8c8c' font-size='1.23472' x='0' y='0' text-anchor='start'>GND</text>
+
 static QDomElement svgText (QDomDocument doc, QString content, double x, double y, const SVGTextStyle &style, SVGTextAlign align, double rotate = 0) {
     QDomElement text = doc.createElement("text");
     text.setAttribute("font-family", "'Droid Sans'");
@@ -423,16 +702,24 @@ static QDomElement svgText (QDomDocument doc, QString content, double x, double 
     text.setAttribute("stroke-width", 0);
     text.setAttribute("fill", style.color);
     text.setAttribute("font-size", pretty(style.size));
+    // Droid Sans cap-height / 2 = 0.357  (also x-height / 2 = 0.268)
+    double voffset = style.size * 0.357;
+    if (align == BottomCenterAlign)
+        voffset = 0;
+    else if (align == TopCenterAlign)
+        voffset = style.size;
     if (fabs(rotate) > 1e-5) {
-        text.setAttribute("transform", QString("translate(%1,%2) rotate(%3) translate(0,%4)")
-                          .arg(x).arg(y).arg(rotate).arg(style.size * 0.3));
+        QString voffsettr = (fabs(voffset > 1e-5) ? QString(" translate(0,%1)").arg(voffset) : "");
+        text.setAttribute("transform", QString("translate(%1,%2) rotate(%3)%4")
+                          .arg(x).arg(y).arg(rotate).arg(voffsettr));
     } else {
         text.setAttribute("x", pretty(x));
-        text.setAttribute("y", pretty(y + style.size * 0.3));
+        text.setAttribute("y", pretty(y + voffset));
     }
     text.setAttribute("text-anchor", svgTextAnchor(align));
     //text.setAttribute("dominant-baseline", "middle"); // fritzing ignores this :(
     //text.setAttribute("dy", "0.5ex"); // it ignores dy too
+    // ^ see https://github.com/fritzing/fritzing-app/issues/3909
     text.appendChild(doc.createTextNode(content));
     return text;
 }
@@ -478,6 +765,28 @@ static QDomDocument generatePCB (const Part &part) {
         copper.appendChild(pad);
     }
 
+    for (int n = 0; n < part.pcbholes.size(); ++ n) {
+        const Hole &hole = part.pcbholes[n];
+        QString id = QString("nonconn%1").arg(n);
+        SVGStyle sthole = { "black", "black", 0 };
+        copper.appendChild(svgCircle(svg, id, hole.x, hole.y, hole.diameter / 2.0, sthole));
+    }
+
+    if (part.pcbmarkstroke > 0) {
+        for (const Marking &mark : part.pcbmarks) {
+            if (mark.shape == Marking::Circle) {
+                double stroke = qMin(part.pcbmarkstroke, mark.diam / 2.0);
+                if (stroke < 1e-6)
+                    continue;
+                SVGStyle stmark = { "none", "#000000", stroke };
+                silkscreen.appendChild(svgCircle(svg, "", mark.x1, mark.y1, mark.diam/2.0, stmark, true));
+            } else if (mark.shape == Marking::Line) {
+                SVGStyle stmark = { "none", "#000000", part.pcbmarkstroke };
+                silkscreen.appendChild(svgLine(svg, "", mark.x1, mark.y1, mark.x2, mark.y2, stmark, mark.capped));
+            }
+        }
+    }
+
     return svg;
 
 }
@@ -507,15 +816,32 @@ static QDomDocument generateBreadboard (const Part &part, QString layername = "b
     }
 
     for (const Pin &pin : part.pins) {
+        QDomElement conn = appendElement(bboard, "g");
+        conn.setAttribute("transform", QString("translate(%1,%2)").arg(pin.x).arg(pin.y));
         double r = pin.hole / 2.0;
         QString id = QString("connector%1pin").arg(pin.number - 1);
         SVGStyle stpad = { "#8c8c8c", "none", 0 };
         QDomElement pad;
         if (pin.square)
-            pad = svgRect(svg, id, pin.x - r, pin.y - r, pin.hole, pin.hole, stpad);
+            pad = svgRect(svg, id, -r, -r, pin.hole, pin.hole, stpad);
         else
-            pad = svgCircle(svg, id, pin.x, pin.y, r, stpad);
-        bboard.appendChild(pad);
+            pad = svgCircle(svg, id, 0, 0, r, stpad);
+        conn.appendChild(pad);
+        if (part.bbpinlabels && pin.name != "") {
+            SVGTextStyle tstlabel = { part.bbpinlabelcolor, part.bbpinlabelsize };
+            const double inset = r + 0.35 * part.bbpinlabelsize; // i guess.
+            // sloppily find closest edge
+            struct EdgeMetrics { double e, dx, dy, rot; SVGTextAlign align; } metrics[] = {
+              { fabs(pin.x), 1, 0, 0, LeftAlign },
+              { fabs(part.width - pin.x), -1, 0, 0, RightAlign },
+              { fabs(pin.y), 0, 1, -90, RightAlign },
+              { fabs(part.height - pin.y), 0, -1, -90, LeftAlign }
+            };
+            EdgeMetrics *m = std::min_element(metrics, metrics + 4, [](auto &a, auto &b){return a.e<b.e;});
+            // well that was the weirdest code i've written in a while.
+            // todo: need a better way to control where these end up
+            conn.appendChild(svgText(svg, pin.name, m->dx*inset, m->dy*inset, tstlabel, m->align, m->rot));
+        }
     }
 
     if (part.bbtext != "") {
@@ -566,21 +892,10 @@ static ScPart scPlaceEdge (const Part &part, ScEdgeMode mode) {
 
     ScPart sc;
 
-    QList<Pin> sortedpins = part.pins;
-    // because of this, (lrtb)pins[] will end up sorted by ScPin::pinpos
-    std::sort(sortedpins.begin(), sortedpins.end(), [](auto &a, auto &b) {
-        if (fabs(a.y - b.y) > 1e-6)
-            return a.y < b.y;
-        else if (fabs(a.x - b.x) > 1e-6)
-            return a.x < b.x;
-        else
-            return a.number < b.number;
-    });
-
     // ---- figure out quadrant and edge of pins
 
     QList<ScPin> lpins[2], rpins[2], tpins[2], bpins[2];
-    for (const Pin &pin : sortedpins) {
+    for (const Pin &pin : part.pins) {
         ScPin scpin(pin);
         double ldist = fabs(pin.x);
         double rdist = fabs(part.width - pin.x);
@@ -606,6 +921,9 @@ static ScPart scPlaceEdge (const Part &part, ScEdgeMode mode) {
 
     auto addpins = [](QList<ScPin> &scpins, QList<ScPin> pins[2], int nslots, ScEdge edge) {
         assert(nslots >= pins[0].size() + pins[1].size());
+        // stable sort so pins at same location stay sorted by number.
+        std::stable_sort(pins[0].begin(), pins[0].end(), [](auto &a,auto &b){return a.pinpos<b.pinpos;}); // ascending!
+        std::stable_sort(pins[1].begin(), pins[1].end(), [](auto &a,auto &b){return b.pinpos<a.pinpos;}); // descending!
         int pos = 0;
         for (ScPin pin : pins[0]) {
             pin.edge = edge;
@@ -629,9 +947,8 @@ static ScPart scPlaceEdge (const Part &part, ScEdgeMode mode) {
     sc.hasbpins = addpins(sc.pins, bpins, sc.gridw, Bottom);
     sc.haslpins = addpins(sc.pins, lpins, sc.gridh, Left);
     sc.hasrpins = addpins(sc.pins, rpins, sc.gridh, Right);
-    std::sort(sc.pins.begin(), sc.pins.end(), [](auto &a, auto &b) {
-        return (a.edge == b.edge) ? (a.gridpos < b.gridpos) : (a.edge < b.edge);
-    });
+    // this sort isnt necessary, it's just to keep the svg a little more readable
+    std::sort(sc.pins.begin(), sc.pins.end(), [](auto &a,auto &b){return a.number<b.number;});
 
     return sc;
 
@@ -679,8 +996,14 @@ static QDomDocument generateSchematic (const Part &part) {
             hdrstyle = Male;
         else if (part.schematicmod == "female")
             hdrstyle = Female;
+        else if (part.schematicmod == "terminal" || part.schematicmod == "")
+            hdrstyle = Terminal;
+        else
+            throw std::runtime_error(QString("unknown schematic header type: %1").arg(part.schematicmod).toStdString());
     } else if (part.schematic == "block")
         sc = scPlaceLinear(part);
+    else
+        throw std::runtime_error(QString("unknown schematic type: %1").arg(part.schematic).toStdString());
 
     qDebug() << "schematic:" << sc.gridw << "x" << sc.gridh;
     for (const ScPin &pin : sc.pins)
@@ -694,11 +1017,14 @@ static QDomDocument generateSchematic (const Part &part) {
     root.setAttribute("version", "1.1");
     root.setAttribute("id", "svg");
 
-    SVGStyle stline = { "none", "#000000", 0.7 / 7.2 };
-    SVGStyle stpin = { "none", "#555555", 0.7 / 7.2 };
-    SVGStyle stterm = { "none", "none", 0 };
-    SVGTextStyle tstpart = { "#000000", 10.0 * 4.25 / 72.0 };
-    SVGTextStyle tstpin = { "#555555", 10.0 * 3.5 / 72.0 };
+    const SVGStyle stline = { "none", "#000000", 0.7 / 7.2 };
+    const SVGStyle stpin = { "none", "#555555", 0.7 / 7.2 };
+    const SVGStyle stterm = { "none", "none", 0 };
+    const SVGTextStyle tstpart = { "#000000", 10.0 * 4.25 / 72.0 };
+    const SVGTextStyle tstpin = { "#555555", 10.0 * 3.5 / 72.0 };
+    const SVGTextStyle tstnum = { "#555555", 10.0 * 2.5 / 72.0 };
+    constexpr double PinLabelInset = 0.15; // not in graphics standard
+    constexpr double PinNumberOffset = 0.1; // not in graphics standard
 
     if (style == Header) {
 
@@ -738,6 +1064,8 @@ static QDomDocument generateSchematic (const Part &part) {
                 conn.appendChild(svgLine(svg, "", 1.0, 0, 2.0 - 2.0 * TRadius, 0, stline));
                 conn.appendChild(svgCircle(svg, "", 2.0 - TRadius, 0, TRadius + 0.5*stline.strokeWidth /* bah */, stline, true));
             }
+            if (part.scpinnumbers)
+                conn.appendChild(svgText(svg, QString("%1").arg(pin.number), 0.5, -0.5*stpin.strokeWidth - PinNumberOffset, tstnum, BottomCenterAlign));
             // - - set position
             conn.setAttribute("transform", QString("translate(0,%1)").arg(pin.gridpos));
             rcbox = QRectF(0, -0.5, 2, 1)
@@ -795,7 +1123,7 @@ static QDomDocument generateSchematic (const Part &part) {
 
         for (const ScPin &scpin : sc.pins) {
             QPoint p1, p2, pt;
-            QPointF pl;
+            QPointF pl, pn;
             SVGTextAlign la = CenterAlign;
             double lr = 0;
             if (scpin.edge == Top) {
@@ -803,23 +1131,27 @@ static QDomDocument generateSchematic (const Part &part) {
                 pl = p2 = QPoint(scpin.gridpos, rcbox.top());
                 la = RightAlign;
                 lr = -90;
-                pl += QPointF(0, stline.strokeWidth + 0.1);
+                pl += QPointF(0, stline.strokeWidth + PinLabelInset);
+                pn = QPointF(p1 + p2) / 2.0 - QPointF(stpin.strokeWidth / 2.0 + PinNumberOffset, 0);
             } else if (scpin.edge == Bottom) {
                 pl = p1 = QPoint(scpin.gridpos, rcbox.bottom() + 1);
                 pt = p2 = QPoint(scpin.gridpos, rcbox.bottom() + 2);
                 la = LeftAlign;
                 lr = -90;
-                pl -= QPointF(0, stline.strokeWidth + 0.1);
+                pl -= QPointF(0, stline.strokeWidth + PinLabelInset);
+                pn = QPointF(p1 + p2) / 2.0 - QPointF(stpin.strokeWidth / 2.0 + PinNumberOffset, 0);
             } else if (scpin.edge == Left) {
                 pt = p1 = QPoint(rcbox.left() - 1, scpin.gridpos);
                 pl = p2 = QPoint(rcbox.left(), scpin.gridpos);
                 la = LeftAlign;
-                pl += QPointF(stline.strokeWidth + 0.1, 0);
+                pl += QPointF(stline.strokeWidth + PinLabelInset, 0);
+                pn = QPointF(p1 + p2) / 2.0 - QPointF(0, stpin.strokeWidth / 2.0 + PinNumberOffset);
             } else if (scpin.edge == Right) {
                 pl = p1 = QPoint(rcbox.right() + 1, scpin.gridpos);
                 pt = p2 = QPoint(rcbox.right() + 2, scpin.gridpos);
                 la = RightAlign;
-                pl -= QPointF(stline.strokeWidth + 0.1, 0);
+                pl -= QPointF(stline.strokeWidth + PinLabelInset, 0);
+                pn = QPointF(p1 + p2) / 2.0 - QPointF(0, stpin.strokeWidth / 2.0 + PinNumberOffset);
             }
             QDomElement term = appendElement(pins, svgRect(svg, QString("connector%1terminal").arg(scpin.number - 1), pt.x(), pt.y(), 1e-5, 1e-5, stterm));
             //term.setAttribute("class", "terminal");
@@ -836,8 +1168,12 @@ static QDomDocument generateSchematic (const Part &part) {
             conn.setAttribute("stroke-linecap", "round");
 #endif
             //conn.setAttribute("class", "pin");
-            if (scpin.name != "")
+            if (part.scpinlabels && scpin.name != "")
                 labels.appendChild(svgText(svg, scpin.name, pl.x(), pl.y(), tstpin, la, lr));
+            if (part.scpinnumbers)
+                labels.appendChild(svgText(svg, QString("%1").arg(scpin.number), pn.x(), pn.y(), tstnum, BottomCenterAlign, lr));
+            // todo: utility function to generate a pin; origin at part-side point, then use
+            // transform(rotate) for vertical ones.
         }
 
         QDomElement outline = appendElement(schem, svgRect(svg, "outline", rcbox.x(), rcbox.y(),
@@ -847,7 +1183,10 @@ static QDomDocument generateSchematic (const Part &part) {
 
         if (part.sctext != "") {
             QPointF center = QRectF(rcbox).center();
-            labels.appendChild(svgText(svg, part.sctext, center.x(), center.y(), tstpart, CenterAlign));
+            if (part.schematic == "block") // todo: really need to change those QRects to QRectFs.
+                labels.appendChild(svgText(svg, part.sctext, 1 + rcbox.right() - PinLabelInset, center.y(), tstpart, TopCenterAlign, 90));
+            else
+                labels.appendChild(svgText(svg, part.sctext, center.x(), center.y(), tstpart, CenterAlign));
         }
 
         // === end box style
@@ -867,20 +1206,20 @@ static QDomElement appendSimple (QDomNode parent, QString tag, QString text) {
 }
 
 
-static QDomDocument generateFZP (const Part &part, QString prefix) {
+static QDomDocument generateFZP (const Part &part, const PartFilenames &names) {
 
     QDomDocument fzp;
     QDomElement module = initDocument(fzp, "module");
-    module.setAttribute("referenceFile", QString("%1.fzp").arg(prefix));
+    module.setAttribute("referenceFile", names.fzp);
     module.setAttribute("fritzingVersion", "0.9.9");
-    module.setAttribute("moduleId", prefix);
+    module.setAttribute("moduleId", part.metadata["moduleid"]);
 
     appendSimple(module, "version", part.metadata["version"]);
     appendSimple(module, "author", part.metadata["author"]);
-    appendSimple(module, "title", part.metadata.getValue("title", prefix));
+    appendSimple(module, "title", part.metadata["title"]);
     appendSimple(module, "label", part.metadata["label"]);
     appendSimple(module, "date", QDate::currentDate().toString());
-    appendSimple(module, "taxonomy", QString("part.dip.%1.pins").arg(part.pins.size())); // todo: ???
+    //appendSimple(module, "taxonomy", QString("part.dip.%1.pins").arg(part.pins.size())); // todo: ???
     appendSimple(module, "description", part.metadata["description"]);
     appendSimple(module, "url", part.metadata["url"]);
 
@@ -907,19 +1246,19 @@ static QDomDocument generateFZP (const Part &part, QString prefix) {
         QDomElement views = appendElement(module, "views"), view, layers;
         view = appendElement(views, "iconView");
         layers = appendElement(view, "layers");
-        layers.setAttribute("image", QString("icon/%1_icon.svg").arg(prefix));
+        layers.setAttribute("image", QString("icon/%1").arg(names.icon));
         appendElement(layers, "layer").setAttribute("layerId", "icon");
         view = appendElement(views, "breadboardView");
         layers = appendElement(view, "layers");
-        layers.setAttribute("image", QString("breadboard/%1_breadboard.svg").arg(prefix));
+        layers.setAttribute("image", QString("breadboard/%1").arg(names.breadboard));
         appendElement(layers, "layer").setAttribute("layerId", "breadboard");
         view = appendElement(views, "schematicView");
         layers = appendElement(view, "layers");
-        layers.setAttribute("image", QString("schematic/%1_schematic.svg").arg(prefix));
+        layers.setAttribute("image", QString("schematic/%1").arg(names.schematic));
         appendElement(layers, "layer").setAttribute("layerId", "schematic");
         view = appendElement(views, "pcbView");
         layers = appendElement(view, "layers");
-        layers.setAttribute("image", QString("pcb/%1_pcb.svg").arg(prefix));
+        layers.setAttribute("image", QString("pcb/%1").arg(names.pcb));
         appendElement(layers, "layer").setAttribute("layerId", "silkscreen");
         appendElement(layers, "layer").setAttribute("layerId", "copper0");
         appendElement(layers, "layer").setAttribute("layerId", "copper1");
@@ -951,7 +1290,7 @@ static QDomDocument generateFZP (const Part &part, QString prefix) {
         addp(view, "copper1", pin.number, false);
     }
 
-    qDebug().noquote() << fzp.toString();
+    //qDebug().noquote() << fzp.toString();
     return fzp;
 
 }
@@ -977,31 +1316,47 @@ static QString sanitize (QString filename) {
     return (filename == "") ? "compiled" : filename;
 }
 
+PartFilenames::PartFilenames (QString prefix, QString builddir) {
+    if (prefix != "") {
+        prefix = sanitize(prefix);
+        fzpz = QString("%1.fzpz").arg(prefix);
+        if (builddir != "") {
+            if (QFileInfo(builddir).isDir())
+                fzpz = QDir(builddir).absoluteFilePath(fzpz);
+            else
+                fzpz = QFileInfo(builddir).absoluteDir().absoluteFilePath(fzpz);
+        }
+        fzp = QString("%1.fzp").arg(prefix);
+        icon = QString("%1_icon.svg").arg(prefix);
+        breadboard = QString("%1_breadboard.svg").arg(prefix);
+        schematic = QString("%1_schematic.svg").arg(prefix);
+        pcb = QString("%1_pcb.svg").arg(prefix);
+    }
+}
 
-void MainWindow::saveBasicPart(const Part &part, QString prefix) {
 
-    prefix = sanitize(prefix);
+void MainWindow::saveBasicPart(const Part &part, const PartFilenames &names) {
 
     QDomDocument pcb = generatePCB(part);
     QDomDocument breadboard = generateBreadboard(part);
     QDomDocument schematic = generateSchematic(part);
     QDomDocument icon = generateIcon(part);
-    QDomDocument fzp = generateFZP(part, prefix);
+    QDomDocument fzp = generateFZP(part, names);
 
-#if 1 // debugging
-    writeXML(pcb, QString("%1-pcb.svg").arg(prefix));
-    writeXML(breadboard, QString("%1-breadboard.svg").arg(prefix));
-    writeXML(schematic, QString("%1-schematic.svg").arg(prefix));
-    writeXML(icon, QString("%1-icon.svg").arg(prefix));
-    writeXML(fzp, QString("%1.fzp").arg(prefix));
+#if 0 // debugging
+    writeXML(pcb, names.pcb);
+    writeXML(breadboard, names.breadboard);
+    writeXML(schematic, names.schematic);
+    writeXML(icon, names.icon);
+    writeXML(fzp, names.fzp);
 #endif
 
     QList<QPair<QDomDocument,QString> > files = {
-        { pcb, QString("svg.pcb.%1_pcb.svg").arg(prefix) },
-        { breadboard, QString("svg.breadboard.%1_breadboard.svg").arg(prefix) },
-        { schematic, QString("svg.schematic.%1_schematic.svg").arg(prefix) },
-        { icon, QString("svg.icon.%1_icon.svg").arg(prefix) },
-        { fzp, QString("part.%1.fzp").arg(prefix) }
+        { pcb, QString("svg.pcb.%1").arg(names.pcb) },
+        { breadboard, QString("svg.breadboard.%1").arg(names.breadboard) },
+        { schematic, QString("svg.schematic.%1").arg(names.schematic) },
+        { icon, QString("svg.icon.%1").arg(names.icon) },
+        { fzp, QString("part.%1").arg(names.fzp) }
     };
 
     QTemporaryDir workdir;
@@ -1014,9 +1369,49 @@ void MainWindow::saveBasicPart(const Part &part, QString prefix) {
         filenames.append(workdir.filePath(file.second));
     }
 
-    QStringList args = { "-o", QString("%1.fzpz").arg(prefix) };
-    args.append(filenames);
-    int result = QProcess::execute("minizip", args);
-    qDebug() << "minizip:" << result;
+    showPartPreviews(breadboard, schematic, pcb);
 
+    if (ui->actBackup->isChecked() && QFile::exists(names.fzpz)) {
+        QString backup = names.fzpz + ".fritzpart.bak";
+        qDebug() << "backup" << names.fzpz << " -> " << backup;
+        qDebug() << "remove" << QFile::remove(backup);
+        qDebug() << "copy" << QFile::copy(names.fzpz, backup);
+    }
+
+    QString minizip = settings.value("minizip", "minizip").toString();
+    QStringList args = { "-o", names.fzpz };
+    args.append(filenames);
+    qDebug() << "minizip:" << minizip;
+    qDebug() << "minizip:" << args;
+    int result = QProcess::execute(minizip, args);
+    qDebug() << "minizip: returned " << result;
+    if (result) {
+        throw std::runtime_error("failed to execute minizip. you may have to select it "
+                                 "from the 'build -> settings -> locate minizip' menu.");
+    }
+
+    if (ui->actShowOutput->isChecked())
+        QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(names.fzpz).absolutePath()));
+
+}
+
+void MainWindow::showPartPreviews (const Part &part) {
+    QDomDocument pcb = generatePCB(part);
+    QDomDocument breadboard = generateBreadboard(part);
+    QDomDocument schematic = generateSchematic(part);
+    showPartPreviews(breadboard, schematic, pcb);
+}
+
+void MainWindow::showPartPreviews(const QDomDocument &bb, const QDomDocument &sc, const QDomDocument &pcb) {
+    ui->svgPCB->load(pcb.toByteArray());
+    ui->svgPCB->renderer()->setAspectRatioMode(Qt::KeepAspectRatio);
+    ui->svgBreadboard->load(bb.toByteArray());
+    ui->svgBreadboard->renderer()->setAspectRatioMode(Qt::KeepAspectRatio);
+    ui->svgSchematic->load(sc.toByteArray());
+    ui->svgSchematic->renderer()->setAspectRatioMode(Qt::KeepAspectRatio);
+}
+
+void MainWindow::on_actOpenIssues_triggered()
+{
+    QDesktopServices::openUrl(QUrl("https://www.github.com/JC3/fritzpart/issues"));
 }

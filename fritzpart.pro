@@ -21,27 +21,54 @@
 # https://github.com/JC3/fritzpart
 #------------------------------------------------------------------------
 
-QT       += core gui xml
+VERSION = 0.9.1.0
 
-greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
+QT       += core gui xml svg widgets
 
 CONFIG += c++17
 
-# You can make your code fail to compile if it uses deprecated APIs.
-# In order to do so, uncomment the following line.
-#DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
-
 SOURCES += \
+    helpwindow.cpp \
     main.cpp \
     mainwindow.cpp
 
 HEADERS += \
+    helpwindow.h \
     mainwindow.h
 
 FORMS += \
+    helpwindow.ui \
     mainwindow.ui
+
+DISTFILES += \
+    README.md \
+    about.html \
+    dist/distclean.bat \
+    dist/installer.nsi \
+    dist/makedist.bat \
+    distclean.bat \
+    examples/test.txt \
+    manual.css
+
+RESOURCES += \
+    fritzpart.qrc
+
+QMAKE_TARGET_DESCRIPTION = "Fritzpart"
+QMAKE_TARGET_COMPANY = "Jason Cipriani"
+QMAKE_TARGET_COPYRIGHT = "Copyright (C) 2021, Jason Cipriani"
+QMAKE_TARGET_PRODUCT = "Fritzpart"
+DEFINES += APPLICATION_VERSION='\\"$$VERSION\\"'
+
+nsiversion.target = dist/version.nsh
+nsiversion.depends = fritzpart.pro
+nsiversion.commands = echo "!define PRODUCT_VERSION \"$$VERSION\"" > $$nsiversion.target
+QMAKE_EXTRA_TARGETS += nsiversion
+PRE_TARGETDEPS += $$nsiversion.target
+
+win32:RC_ICONS = contrib/ic.ico
 
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin
 else: unix:!android: target.path = /opt/$${TARGET}/bin
 !isEmpty(target.path): INSTALLS += target
+

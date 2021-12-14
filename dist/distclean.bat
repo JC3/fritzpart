@@ -21,10 +21,8 @@
 :: https://github.com/JC3/fritzpart
 ::------------------------------------------------------------------------
 
-rmdir /S /Q debug
-rmdir /S /Q release
-del .qmake.stash
-del Makefile Makefile.* fritzpart_resource.rc
-del *.fzp *.fzpz *.svg *.fritzpart.bak
-del examples\*.fzpz examples\*.fritzpart.bak
-del dist\version.nsh
+rmdir /S /Q iconengines imageformats platforms styles translations examples
+del *.dll
+del *.fzp *.fzpz *.svg
+del fritzpart.exe minizip.exe
+del LICENSE README.md

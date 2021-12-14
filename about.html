@@ -1,4 +1,5 @@
-/*----------------------------------------------------------------------
+<html>
+<!--
 Fritzpart - Generates Fritzing parts from a part description script.
 Copyright (C) 2021, Jason Cipriani <jason.cipriani.dev@gmail.com>
 Not affiliated with Fritzing.
@@ -19,25 +20,25 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 https://github.com/JC3/fritzpart
-----------------------------------------------------------------------*/
-
-#include "mainwindow.h"
-#include <QApplication>
-
-int main (int argc, char *argv[]) {
-
-    QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
-    QApplication::setOrganizationName("fritzpart");
-    QApplication::setApplicationName("fritzpart");
-
-    QApplication a(argc, argv);
-    MainWindow w;
-
-    if (argc > 1)
-        w.loadFile(argv[1]);
-
-    w.show();
-
-    return a.exec();
-
-}
+-->
+<head>
+  <style type="text/css">
+   #title { font-weight: bold; }
+   p, td, tr { white-space: nowrap; }
+   td { padding-left: 0; padding-right: 0; border: 0; }
+   .label { padding-right: 1em; }
+   table { border-collapse: collapse; }
+  </style>
+ </head>
+ <body>
+  <h3 id="title">%APPNAME%</h3>
+  <hr/>
+  <p><table>
+   <tr><td class="label">Version:<td>%VERSION%
+   <tr><td class="label">Built:<td>%DATE%<!-- %TIME% -->
+   <tr><td class="label">Website:<td><a href="https://github.com/JC3/fritzpart">https://github.com/JC3/fritzpart</a>
+   <tr><td class="label">Issues:<td><a href="https://github.com/JC3/fritzpart/issues">https://github.com/JC3/fritzpart/issues</a>
+  </table></p>
+  <p>Copyright (C) 2021, Jason Cipriani</p>
+ </body>
+</html>
